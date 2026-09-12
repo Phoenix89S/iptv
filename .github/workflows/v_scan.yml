@@ -1,0 +1,192 @@
+name: python_vk_parser
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    # Каждые 3 дня в 06:00 UTC
+    - cron: "0 6 */3 * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-vk-parser
+  cancel-in-progress: false
+
+jobs:
+  python-vk-parser:
+    name: Run python_vk_parser.py
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 30
+
+    steps:
+      # ======================================================
+      # CHECKOUT
+      # ======================================================
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ======================================================
+      # PYTHON
+      # ======================================================
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      # ======================================================
+      # DEPENDENCIES
+      # ======================================================
+
+      - name: Install Python dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install playwright
+
+      # ======================================================
+      # PLAYWRIGHT / CHROMIUM
+      # ======================================================
+
+      - name: Install Playwright Chromium
+        shell: bash
+        run: |
+          python -m playwright install --with-deps chromium
+
+      # ======================================================
+      # CHECK SCRIPT
+      # ======================================================
+
+      - name: Verify parser exists
+        shell: bash
+        run: |
+          test -f python_vk_parser.py
+          python -m py_compile python_vk_parser.py
+
+          echo "Parser found:"
+          ls -lh python_vk_parser.py
+
+      # ======================================================
+      # RUN
+      # ======================================================
+
+      - name: Run VK IPTV parser
+        shell: bash
+        run: |
+          set +e
+
+          python python_vk_parser.py
+
+          EXIT_CODE=$?
+
+          echo "Parser exit code: ${EXIT_CODE}"
+
+          # Сохраняем код для последующего анализа,
+          # но не скрываем реальные ошибки.
+          echo "${EXIT_CODE}" > parser_exit_code.txt
+
+          exit "${EXIT_CODE}"
+
+      # ======================================================
+      # SHOW RESULT
+      # ======================================================
+
+      - name: Show generated files
+        if: always()
+        shell: bash
+        run: |
+          echo "========================================"
+          echo "GENERATED FILES"
+          echo "========================================"
+
+          find . \
+            -maxdepth 4 \
+            -type f \
+            \( \
+              -name "tv_ip_tv_playlist.m3u" \
+              -o -name "vk_parser.log" \
+              -o -name "*.html" \
+              -o -name "parser_exit_code.txt" \
+            \) \
+            -print \
+            -exec ls -lh {} \;
+
+      # ======================================================
+      # ARTIFACTS
+      # ======================================================
+
+      - name: Upload parser artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python_vk_parser-${{ github.run_number }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            tv_ip_tv_playlist.m3u
+            vk_parser.log
+            parser_exit_code.txt
+            vk_html/**/*.html
+
+      # ======================================================
+      # SUMMARY
+      # ======================================================
+
+      - name: Write GitHub Actions summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "# python_vk_parser"
+            echo
+            echo "## Run"
+            echo "- Repository: `${GITHUB_REPOSITORY}`"
+            echo "- Run: `${GITHUB_RUN_NUMBER}`"
+            echo "- SHA: `${GITHUB_SHA}`"
+            echo
+            echo "## Output"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -f "tv_ip_tv_playlist.m3u" ]; then
+            echo "- M3U: generated" >> "$GITHUB_STEP_SUMMARY"
+
+            ENTRY_COUNT=$(
+              grep -c '^#EXTINF:' \
+              tv_ip_tv_playlist.m3u \
+              2>/dev/null || true
+            )
+
+            echo "- M3U entries: ${ENTRY_COUNT}" \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- M3U: not generated" \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ -f "vk_parser.log" ]; then
+            echo "- Log: generated" \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Log: not generated" \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ -d "vk_html" ]; then
+            HTML_COUNT=$(
+              find vk_html \
+                -type f \
+                -name '*.html' \
+                2>/dev/null | wc -l
+            )
+
+            echo "- Diagnostic HTML files: ${HTML_COUNT}" \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Diagnostic HTML files: 0" \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
