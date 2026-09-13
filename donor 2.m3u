@@ -117,10 +117,7 @@ http://kinowalk.hopto.org/cinematime_live
 http://kinowalk.hopto.org/kinolampa_live
 #EXTINF:-1, 𝕂𝔸ℂℂ𝔼𝕋𝔸
 http://kinowalk.hopto.org/kasseta_live
-#EXTINF:-1, Первый ряд
-http://kinowalk.hopto.org/perviryad_live
-#EXTINF:-1, Тоха Стрим
-http://kinowalk.hopto.org/toxa_stream_live
+
 #EXTINF:-1, lampoTV
 http://kinowalk.hopto.org/lampotv_live
 #EXTINF:-1, ChowAmigo
@@ -947,84 +944,8 @@ http://45.159.94.49:8080/play/live.php?mac=00:1A:79:AD:A9:35&stream=210276&exten
 http://45.159.94.49:8080/play/live.php?mac=00:1A:79:AD:A9:35&stream=210277&extension=ts
 #EXTINF:-1, Travel Guide TV
 http://cdn10.live-tv.od.ua:8081/leonovtv/test-abr/playlist.m3u8
-#EXTINF:-1, Better Life Nature Channel
-https://tgn.bozztv.com/betterlife/betternature/betternature/index.m3u8
-#EXTINF:-1, КАМИН
-https://stream.ads.ottera.tv/playlist.m3u8?network_id=83
-#EXTINF:-1, Stingray Naturescape
-https://stream.ads.ottera.tv/cl/240211cn4j7g65sur7fq378vpg/1920x1080_5711200_3_f.m3u8
-#EXTINF:-1, Brazzers TV
-http://185.23.80.23:8080/BrazzersTV/index.m3u8
-#EXTINF:-1, Barely Legal
-http://185.23.80.23:8080/BarelyLegal/index.m3u8
-#EXTINF:-1, Blue Hustler
-http://185.23.80.23:8080/BlueHustler/index.m3u8
-#EXTINF:-1, RusskayaNoch
-http://185.23.80.23:8080/RusskayaNoch/index.m3u8
-#EXTINF:-1, Passion_XXX
-http://89.33.29.115:8080/Passion_XXX/index.m3u8
-#EXTINF:-1, Babes TV
-http://stream.mcquack.net/55/index.m3u8
-#EXTINF:-1, Exxxotica
-http://stream.mcquack.net/57/index.m3u8
-#EXTINF:-1, Frenchlover
-http://stream.mcquack.net/54/index.m3u8
-#EXTINF:-1, Erox
-http://stream.mcquack.net/58/index.m3u8
-#EXTINF:-1, Blue Hustler
-http://stream.mcquack.net/280/index.m3u8
-#EXTINF:-1, Vivid Red
-http://stream.mcquack.net/284/index.m3u8
-#EXTINF:-1, Barely Legal TV
-http://stream.mcquack.net/289/index.m3u8
-#EXTINF:-1, Playboy TV
-http://stream.mcquack.net/290/index.m3u8
-#EXTINF:-1, Brazzers TV Europa
-http://193.239.186.231/BRAZZERS/index.m3u8
-#EXTINF:-1, BRAZZERS
-http://193.239.187.102/BRAZZERS/index.m3u8
-#EXTINF:-1, penthouse1
-http://185.98.209.11:81/penthouse1/index.m3u8?token=test
-#EXTINF:-1, penthous reality tv
-http://185.98.209.11:81/penthouse2/index.m3u8?token=test
-#EXTINF:-1, RK TV
-http://212.102.38.45/live/test_realitykings_sd_hevc/playlist.m3u8
-#EXTINF:-1, Brazzers
-http://212.102.38.45/live/test_brazzers_hd_hevc/playlist.m3u8
-#EXTINF:-1, Desire
-http://212.102.38.45/live/test_desire_hd_hevc/playlist.m3u8
-#EXTINF:-1, Extasy 4K
-http://212.102.38.45/live/test_extasy_hd_hevc/playlist.m3u8
-#EXTINF:-1, Dorcel TV
-http://212.102.38.45/live/test_dorcel_hd_hevc/playlist.m3u8
-#EXTINF:-1, Eroxxx
-http://212.102.38.45/live/test_eroxxx_hd_hevc/playlist.m3u8
-#EXTINF:-1, Erox
-http://212.102.38.45/live/test_erox_hd_hevc/playlist.m3u8
-#EXTINF:-1, Babes TV
-http://212.102.38.45/live/test_basbes_hd_hevc/playlist.m3u8
-#EXTINF:-1, XY MAX
-http://79.124.21.250:8199/play/DiemaSport/index.m3u8
-#EXTINF:-1, Reality Kings TV
-http://88.212.7.11/live/test_realitykings_sd_hevc/playlist.m3u8
-#EXTINF:-1, Leo TV HD
-http://88.212.7.11/live/test_leo_hd_hevc/playlist.m3u8
-#EXTINF:-1, Digital Desire
-http://88.212.7.11/live/test_desire_hd_hevc/playlist.m3u8
-#EXTINF:-1, Brazzers TV Europe
-http://88.212.7.11/live/test_brazzers_hd_hevc/playlist.m3u8
-#EXTINF:-1, Dorcel TV HD
-http://88.212.7.11/live/test_dorcel_hd_hevc/playlist.m3u8
-#EXTINF:-1, Eroxxx HD
-http://88.212.7.11/live/test_eroxxx_hd_hevc/playlist.m3u8
-#EXTINF:-1, Erox
-http://88.212.7.11/live/test_erox_hd_hevc/playlist.m3u8
-#EXTINF:-1, Extasy TV
-http://88.212.7.11/live/test_extasy_hd_hevc/playlist.m3u8
-#EXTINF:-1, Babes TV
-http://88.212.7.11/live/test_basbes_hd_hevc/playlist.m3u8
-#EXTINF:-1, Porn Classic
-http://200.194.238.229:8383/live/pornclassic/playlist.m3u8
+
+
 #EXTINF:-1, ТНТ
 http://185.46.16.239:8000/TNT
 #EXTINF:-1, Моя планета HD
@@ -2155,32 +2076,7 @@ http://stream.mcquack.net/292/index.m3u8
 http://stream.mcquack.net/382/index.m3u8
 #EXTINF:-1, 5 Канал
 http://stream.mcquack.net/291/index.m3u8
-#EXTINF:-1, Еспресо
-http://stream.mcquack.net/84/index.m3u8
-#EXTINF:-1, FreeДОМ
-http://stream.mcquack.net/63/index.m3u8
-#EXTINF:-1, Gags Network
-http://stream.mcquack.net/458/index.m3u8
-#EXTINF:-1, Babes TV
-http://stream.mcquack.net/55/index.m3u8
-#EXTINF:-1, Exxxotica
-http://stream.mcquack.net/57/index.m3u8
-#EXTINF:-1, Frenchlover
-http://stream.mcquack.net/54/index.m3u8
-#EXTINF:-1, Erox
-http://stream.mcquack.net/58/index.m3u8
-#EXTINF:-1, Blue Hustler
-http://stream.mcquack.net/280/index.m3u8
-#EXTINF:-1, Vivid Red
-http://stream.mcquack.net/284/index.m3u8
-#EXTINF:-1, Barely Legal TV
-http://stream.mcquack.net/289/index.m3u8
-#EXTINF:-1, Playboy TV
-http://stream.mcquack.net/290/index.m3u8
-#EXTINF:-1, 1+1 UA
-http://89.33.29.115:8080/1plus1/index.m3u8
-#EXTINF:-1, 2plus2
-http://89.33.29.115:8080/2plus2/index.m3u8
+
 #EXTINF:-1, TB
 http://89.33.29.115:8080/STB/index.m3u8
 #EXTINF:-1, ANI
