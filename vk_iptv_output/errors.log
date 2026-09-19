@@ -1,0 +1,18 @@
+2026-09-19 15:02:21,293 | INFO | ============================================================
+2026-09-19 15:02:21,293 | INFO | FULL GROUP CRAWL: https://vk.ru/club228871429
+2026-09-19 15:02:21,294 | INFO | MAX PAGES: 1000
+2026-09-19 15:02:21,294 | INFO | ============================================================
+2026-09-19 15:02:21,294 | INFO | PAGE 1/1000 | reason=initial | https://vk.ru/club228871429
+2026-09-19 15:02:23,146 | INFO | POSTS: detected=0 new=0 total=0 | RECORDS +0 total=0
+2026-09-19 15:02:23,850 | INFO | PAGE 2/1000 | reason=offset=20 | https://vk.ru/club228871429?offset=20
+2026-09-19 15:02:24,196 | INFO | POSTS: detected=0 new=0 total=0 | RECORDS +0 total=0
+2026-09-19 15:02:24,900 | INFO | PAGE 3/1000 | reason=offset=20 | https://vk.ru/club228871429?page=2
+2026-09-19 15:02:25,244 | INFO | POSTS: detected=0 new=0 total=0 | RECORDS +0 total=0
+2026-09-19 15:02:25,948 | INFO | PAGE 4/1000 | reason=offset=20 | https://m.vk.ru/club228871429?offset=20
+2026-09-19 15:02:27,807 | INFO | POSTS: detected=0 new=0 total=0 | RECORDS +0 total=0
+2026-09-19 15:02:27,810 | INFO | STOP: 4 consecutive pages without NEW post_id.
+2026-09-19 15:02:27,810 | INFO | CRAWL FINISHED: pages=4 posts=0 records=0
+2026-09-19 15:02:27,811 | INFO | RAW SAVED → vk_iptv_output
+2026-09-19 15:02:27,811 | INFO | ============================================================
+2026-09-19 15:02:27,811 | INFO | FINISHED | posts=0 records=0 alive=0 public=0
+2026-09-19 15:02:27,811 | INFO | ============================================================

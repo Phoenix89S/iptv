@@ -1,0 +1,16 @@
+VK IPTV + ULTRA COLLECTOR v3.1
+======================================================================
+Source: https://vk.ru/club228871429
+Posts: 0
+Records: 0
+Public sources loaded: 0
+Playlist URLs: 0
+Playlists OK: 0
+Direct streams: 0
+Errors: 0
+
+NO DEDUPLICATION: YES
+EMBEDDED M3U: YES
+TOP ALTS (reserves): 12
+PUBLIC SOURCES: 60
+ULTRA CHECK: --check
