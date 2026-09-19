@@ -1,0 +1,25 @@
+#EXTM3U
+#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="1" backup-count="11",Первый
+http://flussonic.mkpnet.ru/tv-4f9598ab5f91dca4/video.m3u8
+#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="2" backup-count="11",Первый [ALT 2]
+https://rt-vlg-saratov-htlive.cdn.ngenix.net/hls/CH_R03_OTT_VLG_SARATOV_1TV/variant.m3u8
+#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="3" backup-count="11",Первый [ALT 3]
+https://zabava-htlive.cdn.ngenix.net/hls/CH_1TVSD_5/variant.m3u8
+#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="4" backup-count="11",Первый [ALT 4]
+https://zabava-htlive.cdn.ngenix.net/hls/CH_1TVSD_8/variant.m3u8
+#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="5" backup-count="11",Первый [ALT 5]
+https://zabava-htlive.cdn.ngenix.net/hls/CH_1TVSD/variant.m3u8
+#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="6" backup-count="11",Первый [ALT 6]
+https://rt-nw-klgr-htlive.cdn.ngenix.net/hls/CH_R03_1TV_KLNG/variant.m3u8
+#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="7" backup-count="11",Первый [ALT 7]
+https://rt-sib-omsk-htlive.cdn.ngenix.net/hls/CH_R03_OTT_SIB_OMSK_1TV_OMSKOBL/variant.m3u8
+#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="8" backup-count="11",Первый [ALT 8]
+https://zabava-htlive.cdn.ngenix.net/hls/CH_1TVSD_2/variant.m3u8
+#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="9" backup-count="11",Первый [ALT 9]
+https://zabava-htlive.cdn.ngenix.net/hls/CH_1TVSD_6/variant.m3u8
+#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="10" backup-count="11",Первый [ALT 10]
+https://s14131.cdn.ngenix.net/hls/CH_R41_OTT_DV_KAM_1TV/variant.m3u8
+#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="11" backup-count="11",Первый [ALT 11]
+https://zabava-htlive.cdn.ngenix.net/hls/CH_1TVSD_4/variant.m3u8
+#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="12" backup-count="11",Первый [ALT 12]
+https://serv30.vintera.tv/restream/1_old/playlist.m3u8
