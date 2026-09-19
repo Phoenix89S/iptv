@@ -1,1529 +1,920 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-VK IPTV / M3U COLLECTOR + ULTRA CHECKER  v3.1
-=============================================
+RU IPTV MEGA PARSER
+===================
+Большой агрегатор публичных M3U/M3U8 + EPG.
 
-Основа: полный VK-коллектор
-  - обход публичной ленты VK (offset / mobile / classic)
-  - извлечение ВСЕХ постов
-  - встроенный M3U в тексте поста
-  - вложенные плейлисты
-  - БЕЗ дедупликации записей/потоков
-  - диагностика (jsonl, stats, posts и т.д.)
+Цели:
+  * собирать 20 000+ уникальных каналов, если их реально дают источники;
+  * отдельный приоритет России/русскоязычных каналов;
+  * сохранять ВСЕ уникальные потоки, а не только один URL;
+  * для каждого канала стремиться к >= 12 альтернативным потокам;
+  * EPG: epg.one -> Teleguide -> EPG из самих M3U/XMLTV источников;
+  * проверка потоков с большим количеством workers;
+  * SQLite-кэш результатов проверки;
+  * готовые M3U, JSON, JSONL, CSV и XMLTV index.
 
-Дополнено логикой Ultra IPTV Checker:
-  - ПОЛНЫЙ список PUBLIC_INTERNET_SOURCES (iptv-org, Free-TV, dearbulut, smolnp, naggdd + RU/СНГ)
-  - fuzzy-grouping + adult-фильтр
-  - async HTTP-проверка + deep-ffprobe
-  - scoring (latency / resolution / bitrate / codec)
-  - выходные плейлисты: best / stable / online / all_with_alts
-  - до 12 резервных потоков на канал
-  - --discover: активный поиск альтернатив по всем публичным источникам
+Важно:
+  20 000 каналов и 12 потоков на канал — это ЦЕЛЕВОЙ масштаб.
+  Скрипт не создаёт фиктивные URL: итоговое количество зависит от реально
+  доступных публичных источников.
 
-Зависимости:
-    pip install requests beautifulsoup4 aiohttp rich
+Запуск:
+  python RU_IPTV_MEGA_PARSER.py
 
-Примеры:
-    # VK + все публичные источники + проверка + 12 резервов
-    python vk_ultra_collector_v3.py \\
-        --url "https://vk.ru/club228871429" \\
-        --discover --check --deep --top 12 --workers 80 \\
-        --output vk_out
+Опционально:
+  python RU_IPTV_MEGA_PARSER.py --no-check
+  python RU_IPTV_MEGA_PARSER.py --workers 256
+  python RU_IPTV_MEGA_PARSER.py --max-channels 0
+  python RU_IPTV_MEGA_PARSER.py --sources-file sources.txt
 
-    # Только публичные источники (без VK)
-    python vk_ultra_collector_v3.py --discover --check --top 12 --output discover_out
+Файл sources.txt: один M3U/M3U8 URL на строку. Можно добавлять свои публичные
+плейлисты без изменения кода.
 """
 
 from __future__ import annotations
 
 import argparse
-import asyncio
-import html
+import concurrent.futures as cf
+import gzip
+import hashlib
 import json
 import logging
+import os
 import re
-import shutil
-import subprocess
+import sqlite3
 import sys
 import time
-from collections import deque
-from dataclasses import asdict, dataclass, field
-from difflib import SequenceMatcher
+import unicodedata
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Optional
-from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
+from typing import Iterable, Optional
 
-import aiohttp
-import requests
-from bs4 import BeautifulSoup
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+# ---------------------------------------------------------------------------
+# CONFIG
+# ---------------------------------------------------------------------------
 
-try:
-    from rich.console import Console
-    from rich.logging import RichHandler
-    from rich.progress import (
-        Progress, SpinnerColumn, BarColumn, TextColumn,
-        TimeRemainingColumn, MofNCompleteColumn,
-    )
-    from rich.table import Table
-    HAS_RICH = True
-except ImportError:
-    HAS_RICH = False
+OUT = Path("mega_iptv_output")
+DB = OUT / "mega_iptv.db"
+LOG = OUT / "mega_parser.log"
 
-# ============================================================================
-# DEFAULTS
-# ============================================================================
+TARGET_CHANNELS = 20_000
+TARGET_RU = 10_000
+MIN_ALTERNATIVES = 12
+DEFAULT_WORKERS = 256
+FETCH_WORKERS = 64
+CHECK_WORKERS = 256
 
-DEFAULT_URL = "https://vk.ru/club228871429"
-DEFAULT_OUTPUT = "vk_iptv_output"
+CONNECT_TIMEOUT = 5
+READ_TIMEOUT = 12
+MAX_BYTES = 80 * 1024 * 1024
+CACHE_TTL = 6 * 3600
 
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/120.0.0.0 Safari/537.36 "
-    "VK-IPTV-Ultra/3.1"
-)
+USER_AGENT = "RU-IPTV-Mega-Parser/1.0 (+public-playlist-aggregator)"
 
-DEFAULT_TIMEOUT = 10
-DEFAULT_WORKERS = 80
-DEFAULT_TOP_N = 12          # резервов потоков на канал
-DEFAULT_FUZZY = 0.78
-FFPROBE_TIMEOUT = 12
-DEFAULT_MAX_ALTS = 40       # максимум кандидатов до проверки
-
-REQUEST_TIMEOUT = (12, 35)
-PLAYLIST_TIMEOUT = (12, 45)
-MAX_HTML_BYTES = 25 * 1024 * 1024
-MAX_PLAYLIST_BYTES = 50 * 1024 * 1024
-VK_DELAY = 0.7
-PLAYLIST_DELAY = 0.15
-DEFAULT_MAX_PAGES = 1000
-DEFAULT_MAX_PLAYLIST_DEPTH = 2
-OFFSET_STEP = 20
-EMPTY_PAGE_LIMIT = 4
-
-# ============================================================================
-# PUBLIC INTERNET SOURCES — максимум + расширенный RU/СНГ
-# ============================================================================
-
-PUBLIC_INTERNET_SOURCES = [
-    # === Глобальные ===
-    "https://iptv-org.github.io/iptv/index.m3u",
-    "https://iptv-org.github.io/iptv/index.category.m3u",
-    "https://iptv-org.github.io/iptv/index.country.m3u",
-    "https://iptv-org.github.io/iptv/index.language.m3u",
-    "https://iptv-org.github.io/iptv/languages/rus.m3u",
-    "https://iptv-org.github.io/iptv/regions/cis.m3u",
-    "https://iptv-org.github.io/iptv/regions/cas.m3u",
-    "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8",
-
-    # dearbulut
-    "https://dearbulut.github.io/iptv/playlists/best.m3u",
-    "https://dearbulut.github.io/iptv/playlists/online.m3u",
-    "https://dearbulut.github.io/iptv/playlists/index.m3u",
-    "https://dearbulut.github.io/iptv/playlists/country/ru.m3u",
-    "https://dearbulut.github.io/iptv/playlists/country/kz.m3u",
-    "https://dearbulut.github.io/iptv/playlists/country/uz.m3u",
-    "https://dearbulut.github.io/iptv/playlists/country/kg.m3u",
-    "https://dearbulut.github.io/iptv/playlists/country/tj.m3u",
-    "https://dearbulut.github.io/iptv/playlists/country/mn.m3u",
-    "https://dearbulut.github.io/iptv/playlists/country/by.m3u",
-    "https://dearbulut.github.io/iptv/playlists/country/ua.m3u",
-
-    # === Россия (максимум площадок) ===
+# Known public sources. Additional sources can be supplied with --sources-file.
+# iptv-org is intentionally expanded dynamically from its PLAYLISTS.md so that
+# country/subdivision/city playlists do not have to be hard-coded forever.
+BASE_SOURCES = [
     "https://iptv-org.github.io/iptv/countries/ru.m3u",
-    "https://raw.githubusercontent.com/smolnp/IPTVru/gh-pages/IPTVru.m3u",
-    "https://raw.githubusercontent.com/smolnp/IPTVru/gh-pages/IPTVstable.m3u8",
-    "https://raw.githubusercontent.com/smolnp/IPTVru/gh-pages/IPTVmir.m3u8",
-    "https://raw.githubusercontent.com/smolnp/IPTVru/gh-pages/IPTVdonor.m3u",
-    "https://raw.githubusercontent.com/smolnp/IPTVru/gh-pages/IPRadio.m3u",
     "https://naggdd.github.io/iptv/ru.m3u",
-    "https://naggdd.github.io/iptv/music.m3u",
-    "https://naggdd.github.io/iptv/cartoons.m3u",
-    "https://raw.githubusercontent.com/IPTVRU2026/IPTVMIR/main/IPTV_MEGA_PLAYLIST.m3u",
-    "https://myplaylists.github.io/iptv/ru.m3u",
-    "https://iptv.org.ua/iptv/avto.m3u",
-    "https://iptv.org.ua/iptv/avto-full.m3u",
-    "https://iptv.org.ua/iptv/tva1.m3u",
-    "https://iptv.org.ua/iptv/provayder.m3u",
-    "https://iptv.org.ua/iptv/avtomini.m3u",
-
-    # === Казахстан ===
-    "https://iptv-org.github.io/iptv/countries/kz.m3u",
-    "https://aidoseg.github.io/qazaqiptv/playlist.m3u8",
-    "https://raw.githubusercontent.com/Monoloshka/iptv/main/BeeTV.m3u",
-    "https://raw.githubusercontent.com/Monoloshka/iptv/main/full-iptv.m3u",
-    "https://raw.githubusercontent.com/Monoloshka/iptv/main/tv.m3u",
-
-    # === Узбекистан / Кыргызстан / Таджикистан / Монголия ===
-    "https://iptv-org.github.io/iptv/countries/uz.m3u",
-    "https://iptv-org.github.io/iptv/countries/kg.m3u",
-    "https://iptv-org.github.io/iptv/countries/tj.m3u",
-    "https://iptv-org.github.io/iptv/countries/mn.m3u",
-
-    # === Украина + остальные СНГ ===
-    "https://iptv-org.github.io/iptv/countries/ua.m3u",
-    "https://myplaylists.github.io/iptv/ua.m3u",
-    "https://iptv-org.github.io/iptv/countries/by.m3u",
-    "https://iptv-org.github.io/iptv/countries/am.m3u",
-    "https://iptv-org.github.io/iptv/countries/ge.m3u",
-    "https://iptv-org.github.io/iptv/countries/az.m3u",
-    "https://iptv-org.github.io/iptv/countries/md.m3u",
-    "https://iptv-org.github.io/iptv/countries/tm.m3u",
-
-    # === Категории ===
-    "https://iptv-org.github.io/iptv/categories/news.m3u",
-    "https://iptv-org.github.io/iptv/categories/sports.m3u",
-    "https://iptv-org.github.io/iptv/categories/movies.m3u",
-    "https://iptv-org.github.io/iptv/categories/entertainment.m3u",
-    "https://iptv-org.github.io/iptv/categories/kids.m3u",
-    "https://iptv-org.github.io/iptv/categories/music.m3u",
-    "https://iptv-org.github.io/iptv/categories/documentary.m3u",
-    "https://iptv-org.github.io/iptv/categories/general.m3u",
+    "https://smolnp.github.io/IPTVru/IPTVru.m3u",
+    "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlist.m3u8",
+    "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_russia.m3u8",
+    "https://dearbulut.github.io/iptv/playlists/country/ru.m3u",
+    "https://raw.githubusercontent.com/substanc1/iptv-russia/main/streams/ru.m3u",
 ]
 
-ADULT_KEYWORDS = [
-    "xxx", "porn", "porno", "erotica", "эротика", "эротический", "adult",
-    "18+", "18 +", "+18", "sex", "sexy", "hentai", "brazzers", "playboy",
-    "blue hentai", "redlight", "red light", "private", "reality kings",
-    "bonga", "cam4", "chaturbate", "onlyfans", "xhamster", "xvideos",
-    "pornhub", "youporn", "redtube", "tube8", "spankbang", "xnxx",
-    "nude", "naked", "strip", "striptease", "fetish", "bdsm", "hardcore",
-    "softcore", "amateur", "milf", "teen sex", "lesbian", "gay porn",
-    "busty", "big tits", "anal", "oral", "cum", "squirting",
-    "русская эротика", "русское порно", "adult channel", "adult tv",
-    "night club", "nightclub", "sexy night", "hot night", "private gold",
-    "dorcel", "private platinum", "vivid", "hustler", "penthouse",
+IPTV_ORG_PLAYLISTS = "https://raw.githubusercontent.com/iptv-org/iptv/master/PLAYLISTS.md"
+
+EPG_SOURCES = [
+    (1, "epg.one", "https://epg.one/epg2.xml.gz"),
+    (2, "teleguide", "https://www.teleguide.info/download/new3/xmltv.xml.gz"),
 ]
 
-WALL_RE = re.compile(r"(?:https?://[^/\s]+)?/(?:wall|w=wall)(-?\d+_\d+)", re.I)
-WALL_ID_RE = re.compile(r"(?:wall(?:_|%5F)|w=wall(?:_|%5F))(-?\d+_\d+)", re.I)
-URL_RE = re.compile(r"""(?ix)(?:https?://|//)[^\s<>"'\\]+""")
-ATTR_RE = re.compile(r"""(?is)([a-zA-Z][a-zA-Z0-9_-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
-QUALITY_RE = re.compile(
-    r"[\s\-_]*(4[Kk]|UHD|FHD|HD|SD|HEVC|H\.?265|H\.?264|AVC|"
-    r"50[Ff]ps|60[Ff]ps|\d{3,4}[pP]|HQ|LQ|Full\s*HD)[\s\-_]*", re.I)
-EMOJI_RE = re.compile(
-    "[" "\U0001F600-\U0001F64F" "\U0001F300-\U0001F5FF" "\U0001F680-\U0001F6FF"
-    "\U0001F1E0-\U0001F1FF" "\U00002702-\U000027B0" "\U000024C2-\U0001F251" "]+",
-    flags=re.UNICODE)
-GEO_RE = re.compile(
-    r"[\s\-_]*(Geo[\s\-]?blocked|Only\s*(RU|BY|KZ|UA|EU|US)|\[(RU|BY|KZ|UA)\])[\s\-_]*", re.I)
-BRACKETS_RE = re.compile(r"[\(\[\{].*?[\)\]\}]")
+# Additional EPG URLs may be placed here. Keep them public XMLTV/XML/XML.GZ.
+EXTRA_EPG = []
 
-M3U_EXTENSIONS = (".m3u", ".m3u8")
-DIRECT_STREAM_EXTENSIONS = (
-    ".m3u8", ".m3u", ".ts", ".m4s", ".aac", ".mp3", ".mp4", ".mkv", ".flv", ".webm", ".mpd",
+BAD_NAME_TOKENS = {
+    "xxx", "porn", "porno", "pornhub", "adult", "sex", "erotic",
+    "18+", "казино", "casino", "bet", "ставки", "букмекер",
+}
+
+RU_WORDS = {
+    "россия", "российский", "русский", "русская", "москва", "мск",
+    "санкт-петербург", "петербург", "питер", "регион", "область",
+    "край", "республика", "чувашия", "татарстан", "башкортостан",
+    "сибирь", "урал", "кубань", "дон", "сахалин", "калининград",
+    "новосибирск", "екатеринбург", "казань", "самара", "омск",
+    "томск", "владивосток", "хабаровск", "архангельск", "мурманск",
+    "рус", "ru", "cis", "снг", "беларусь", "казахстан", "кыргызстан",
+    "узбекистан", "армения", "азербайджан", "молдова",
+}
+
+# ---------------------------------------------------------------------------
+# LOGGING
+# ---------------------------------------------------------------------------
+
+OUT.mkdir(parents=True, exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    handlers=[logging.FileHandler(LOG, encoding="utf-8"), logging.StreamHandler(sys.stdout)],
 )
-DIRECT_STREAM_MARKERS = (
-    "/hls/", "/hls?", "/live/", "/live?", "/stream/", "/stream?", "/playlist/",
-    "/manifest", "/chunklist", "format=m3u8", "type=m3u8", "output=m3u8",
-)
-NON_STREAM_HOST_MARKERS = (
-    "vk.ru", "vk.com", "m.vk.com", "youtube.com", "youtu.be", "rutube.ru",
-    "t.me", "telegram.me", "instagram.com", "facebook.com", "twitter.com",
-    "x.com", "github.com", "gitlab.com", "google.com", "yandex.ru",
-)
+log = logging.getLogger("mega")
 
-console = Console() if HAS_RICH else None
-LOG = logging.getLogger("vk_ultra")
-
-
-def setup_logging(output_dir: Path, verbose: bool) -> None:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    LOG.setLevel(logging.DEBUG)
-    LOG.handlers.clear()
-    LOG.propagate = False
-    formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
-    fh = logging.FileHandler(output_dir / "errors.log", encoding="utf-8")
-    fh.setLevel(logging.DEBUG)
-    fh.setFormatter(formatter)
-    ch = logging.StreamHandler(sys.stdout)
-    ch.setLevel(logging.DEBUG if verbose else logging.INFO)
-    ch.setFormatter(formatter)
-    LOG.addHandler(fh)
-    LOG.addHandler(ch)
-    if HAS_RICH and verbose:
-        LOG.addHandler(RichHandler(console=console, rich_tracebacks=True))
-
+# ---------------------------------------------------------------------------
+# MODELS
+# ---------------------------------------------------------------------------
 
 @dataclass
-class Post:
-    post_id: str
-    url: str
-    text: str
-    html_fragment: str = ""
-    page_url: str = ""
-    discovered_by: str = ""
-
-
-@dataclass
-class Record:
-    sequence: int
-    name: str
-    url: str
-    source_type: str
-    source_page: str = ""
-    source_post: str = ""
-    playlist_url: str = ""
-    playlist_depth: int = 0
-    extinf: str = ""
-    tvg_id: str = ""
-    tvg_name: str = ""
-    tvg_logo: str = ""
-    group_title: str = ""
-    raw_text: str = ""
-    latency_ms: float = 99999.0
-    http_ok: bool = False
-    status_code: int = 0
-    resolution: str = ""
-    width: int = 0
-    height: int = 0
-    codec: str = ""
-    bitrate_kbps: float = 0.0
-    score: float = 0.0
-    error: str = ""
-
-
-@dataclass
-class StreamInfo:
+class Stream:
     url: str
     source: str = ""
-    latency_ms: float = 99999.0
-    http_ok: bool = False
-    status_code: int = 0
-    resolution: str = ""
-    width: int = 0
-    height: int = 0
-    codec: str = ""
-    bitrate_kbps: float = 0.0
-    score: float = 0.0
-    error: str = ""
+    alive: Optional[bool] = None
+    latency_ms: Optional[int] = None
+    status: Optional[int] = None
+    content_type: str = ""
+    bitrate: Optional[int] = None
+    checked_at: int = 0
+    failures: int = 0
+    successes: int = 0
+
+    def key(self) -> str:
+        return normalize_url(self.url)
 
 
 @dataclass
 class Channel:
+    key: str
     name: str
-    group: str = "Undefined"
-    logo: str = ""
+    original_names: list[str] = field(default_factory=list)
     tvg_id: str = ""
-    streams: list[StreamInfo] = field(default_factory=list)
+    tvg_name: str = ""
+    logo: str = ""
+    group: str = ""
+    country: str = ""
+    language: str = ""
+    russian_priority: bool = False
+    sources: set[str] = field(default_factory=set)
+    streams: dict[str, Stream] = field(default_factory=dict)
+    epg_source: str = ""
+    epg_confidence: float = 0.0
+    tvg_shift: str = ""
 
-    @property
-    def best_stream(self) -> Optional[StreamInfo]:
-        alive = [s for s in self.streams if s.http_ok]
-        return max(alive, key=lambda s: s.score) if alive else None
+    def add_stream(self, stream: Stream) -> None:
+        k = stream.key()
+        if not k:
+            return
+        old = self.streams.get(k)
+        if old is None:
+            self.streams[k] = stream
+        else:
+            # Preserve the richest information from duplicate records.
+            if not old.source and stream.source:
+                old.source = stream.source
+            if stream.logo if False else False:
+                pass
 
-    @property
-    def alive_streams(self) -> list[StreamInfo]:
-        return sorted(
-            [s for s in self.streams if s.http_ok],
-            key=lambda s: s.score,
-            reverse=True,
-        )
+    def stream_list(self) -> list[Stream]:
+        return list(self.streams.values())
+
+# ---------------------------------------------------------------------------
+# HTTP
+# ---------------------------------------------------------------------------
 
 
-@dataclass
-class CollectorStats:
-    pages_requested: int = 0
-    pages_ok: int = 0
-    pages_failed: int = 0
-    posts_found: int = 0
-    posts_processed: int = 0
-    urls_found_in_posts: int = 0
-    all_links_found: int = 0
-    direct_stream_urls: int = 0
-    non_stream_links: int = 0
-    playlist_urls_found: int = 0
-    playlists_requested: int = 0
-    playlists_ok: int = 0
-    playlists_failed: int = 0
-    playlists_not_m3u: int = 0
-    playlist_records: int = 0
-    nested_playlist_urls: int = 0
-    total_records: int = 0
-    errors: int = 0
-    repeated_playlist_urls: int = 0
-    repeated_post_ids: int = 0
-    streams_checked: int = 0
-    streams_alive: int = 0
-    channels_after_fuzzy: int = 0
-    public_sources_loaded: int = 0
+def request_bytes(url: str, timeout: tuple[int, int] = (CONNECT_TIMEOUT, READ_TIMEOUT), max_bytes: int = MAX_BYTES) -> bytes:
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "*/*"})
+    with urllib.request.urlopen(req, timeout=sum(timeout)) as r:
+        chunks = []
+        total = 0
+        while True:
+            chunk = r.read(256 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise ValueError(f"response exceeds {max_bytes} bytes: {url}")
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+
+def fetch_text(url: str, max_bytes: int = MAX_BYTES) -> str:
+    data = request_bytes(url, max_bytes=max_bytes)
+    # gzip by extension or magic bytes
+    if url.lower().split("?", 1)[0].endswith(".gz") or data[:2] == b"\x1f\x8b":
+        data = gzip.decompress(data)
+    return data.decode("utf-8", "replace")
+
+# ---------------------------------------------------------------------------
+# NORMALIZATION
+# ---------------------------------------------------------------------------
+
+
+def clean_text(s: str) -> str:
+    s = unicodedata.normalize("NFKC", s or "")
+    s = s.replace("ё", "е").replace("Ё", "Е")
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
 
 
 def normalize_name(name: str) -> str:
-    if not name:
+    s = clean_text(name).lower()
+    s = re.sub(r"\([^)]*\+\d+[^)]*\)", " ", s)
+    s = re.sub(r"\[[^]]*\]", " ", s)
+    s = re.sub(r"\b\d{1,4}\s*[.)-]\s*", " ", s)
+    s = re.sub(r"\b(uhd|fhd|hd|sd|4k|8k|1080p|720p|576p|480p)\b", " ", s)
+    s = re.sub(r"\b(рус|russia|ru)\b", " ", s)
+    s = re.sub(r"[^\w\sа-яА-ЯёЁ]", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def canonical_key(name: str, tvg_id: str = "") -> str:
+    n = normalize_name(name)
+    if tvg_id:
+        tid = clean_text(tvg_id).lower()
+        if tid:
+            return f"id:{tid}"
+    return "name:" + n
+
+
+def normalize_url(url: str) -> str:
+    url = (url or "").strip()
+    if not url:
         return ""
-    n = name.strip()
-    n = EMOJI_RE.sub(" ", n)
-    n = QUALITY_RE.sub(" ", n)
-    n = GEO_RE.sub(" ", n)
-    n = BRACKETS_RE.sub(" ", n)
-    n = re.sub(r"[^\w\sа-яА-ЯёЁ\-]", " ", n, flags=re.UNICODE)
-    n = re.sub(r"\s+", " ", n).strip().lower()
-    return n
-
-
-def fuzzy_ratio(a: str, b: str) -> float:
-    return SequenceMatcher(None, a, b).ratio()
-
-
-def find_best_key(name: str, existing_keys: dict[str, str], threshold: float) -> Optional[str]:
-    norm = normalize_name(name)
-    if not norm:
-        return None
-    if norm in existing_keys:
-        return norm
-    best_key, best_score = None, 0.0
-    for key in existing_keys:
-        score = fuzzy_ratio(norm, key)
-        if score > best_score and score >= threshold:
-            best_score = score
-            best_key = key
-    return best_key
-
-
-def is_adult(name: str, group: str = "") -> bool:
-    name_l = (name or "").lower()
-    norm = normalize_name(name)
-    if any(kw in name_l or kw in norm for kw in ADULT_KEYWORDS):
-        return True
-    group_l = (group or "").lower()
-    return any(kw in group_l for kw in ("adult", "xxx", "erotica", "эротика", "18+", "porn"))
-
-
-def clean_url(raw: str) -> str:
-    value = html.unescape(str(raw or "")).strip()
-    value = value.replace("&amp;", "&").replace("\\/", "/")
-    value = value.strip("\"'<>")
-    while value and value[-1] in ".,;:)]}>":
-        value = value[:-1]
-    while value.startswith("(") and value.endswith(")"):
-        value = value[1:-1].strip()
-    return value
-
-
-def normalize_protocol_relative(url: str, base_url: str) -> str:
-    if url.startswith("//"):
-        base = urlparse(base_url)
-        return f"{base.scheme or 'https'}:{url}"
-    return url
-
-
-def is_http_url(url: str) -> bool:
     try:
-        return urlparse(url).scheme.lower() in {"http", "https"}
+        p = urllib.parse.urlsplit(url)
+        # Preserve query because signed streams may depend on it.
+        scheme = p.scheme.lower()
+        host = p.netloc.lower()
+        path = re.sub(r"/{2,}", "/", p.path)
+        return urllib.parse.urlunsplit((scheme, host, path, p.query, ""))
     except Exception:
-        return False
+        return url
 
 
-def canonical_page_url(url: str) -> str:
-    value = clean_url(url)
-    try:
-        p = urlparse(value)
-        return urlunparse((p.scheme.lower(), p.netloc.lower(), p.path or "/", "", p.query, ""))
-    except Exception:
-        return value
+def is_bad_name(name: str) -> bool:
+    low = clean_text(name).lower()
+    return any(tok in low for tok in BAD_NAME_TOKENS)
 
 
-def add_query_param(url: str, key: str, value: str | int) -> str:
-    p = urlparse(url)
-    query = [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=True) if k.lower() != key.lower()]
-    query.append((key, str(value)))
-    return urlunparse((p.scheme, p.netloc, p.path, p.params, urlencode(query), p.fragment))
+def russian_score(name: str, group: str, country: str, language: str, source: str) -> int:
+    text = " ".join([name, group, country, language, source]).lower()
+    score = 0
+    if re.search(r"[а-яё]", text):
+        score += 5
+    if country.lower() in {"ru", "russia", "rus"}:
+        score += 10
+    if language.lower().startswith("ru") or language.lower() in {"rus", "russian"}:
+        score += 10
+    for w in RU_WORDS:
+        if w in text:
+            score += 1
+    return score
+
+# ---------------------------------------------------------------------------
+# M3U PARSER
+# ---------------------------------------------------------------------------
+
+_ATTR_RE = re.compile(r'''([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s,]+))''')
 
 
-def extract_urls(text: str, base_url: str = "") -> list[str]:
-    source = html.unescape(str(text or ""))
-    result: list[str] = []
-    for match in URL_RE.finditer(source):
-        value = clean_url(match.group(0))
-        value = normalize_protocol_relative(value, base_url)
-        if is_http_url(value):
-            result.append(value)
-    for match in re.finditer(r"""(?is)\b(?:href|src)\s*=\s*(?:"([^"]+)"|'([^']+)')""", source):
-        value = html.unescape(match.group(1) or match.group(2) or "").strip()
-        if value.startswith("//"):
-            value = normalize_protocol_relative(value, base_url)
-        elif value.startswith("/") and base_url:
-            value = urljoin(base_url, value)
-        value = clean_url(value)
-        if is_http_url(value):
-            result.append(value)
-    return result
-
-
-def looks_like_playlist_url(url: str) -> bool:
-    try:
-        p = urlparse(url)
-        path, query = p.path.lower(), p.query.lower()
-    except Exception:
-        path, query = url.lower(), ""
-    if any(path.endswith(ext) for ext in M3U_EXTENSIONS):
-        return True
-    if "/index.m3u8" in path or "/index.m3u" in path:
-        return True
-    return any(m in query for m in (
-        "format=m3u", "type=m3u", "output=m3u", "playlist=m3u",
-        "format=m3u8", "type=m3u8",
-    ))
-
-
-def looks_like_direct_stream(url: str) -> bool:
-    if not is_http_url(url):
-        return False
-    if looks_like_playlist_url(url):
-        return True
-    p = urlparse(url)
-    host, path, query = p.netloc.lower(), p.path.lower(), p.query.lower()
-    if any(m in host for m in NON_STREAM_HOST_MARKERS):
-        return False
-    if any(path.endswith(ext) for ext in DIRECT_STREAM_EXTENSIONS):
-        return True
-    if any(m in path or m in query for m in DIRECT_STREAM_MARKERS):
-        return True
-    return any(x in query for x in (
-        "stream=", "channel=", "channel_id=", "stream_id=", "manifest=", "hls=", "dash=",
-    ))
-
-
-def looks_like_embedded_m3u(text: str) -> bool:
-    sample = (text or "")[:100_000].lstrip("\ufeff \t\r\n")
-    if not sample:
-        return False
-    upper = sample.upper()
-    return (
-        upper.startswith("#EXTM3U")
-        or "#EXTINF:" in upper
-        or re.search(r"(?im)^\s*#EXTINF", sample) is not None
-    )
-
-
-def html_to_text(fragment: str) -> str:
-    soup = BeautifulSoup(fragment or "", "html.parser")
-    for tag in soup(["script", "style", "noscript", "svg"]):
-        tag.decompose()
-    return soup.get_text("\n", strip=True)
-
-
-def normalize_text(text: str) -> str:
-    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in (text or "").splitlines()]
-    return "\n".join(x for x in lines if x)
-
-
-def post_id_from(value: str) -> str:
-    match = WALL_ID_RE.search(html.unescape(str(value or "")))
-    return match.group(1) if match else ""
-
-
-def post_url_from_id(post_id: str, page_url: str) -> str:
-    return urljoin(page_url, f"/wall{post_id}")
-
-
-def safe_fragment_text(node) -> str:
-    try:
-        return normalize_text(html_to_text(str(node)))
-    except Exception:
-        return ""
-
-
-def build_session() -> requests.Session:
-    session = requests.Session()
-    retry = Retry(
-        total=4, connect=4, read=4, status=4, backoff_factor=0.6,
-        status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=frozenset({"GET", "HEAD"}),
-        raise_on_status=False, respect_retry_after_header=True,
-    )
-    adapter = HTTPAdapter(max_retries=retry, pool_connections=32, pool_maxsize=32)
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-    session.headers.update({
-        "User-Agent": USER_AGENT,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.7",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-    })
-    return session
-
-
-def _wall_ids_in_node(node) -> set[str]:
-    fragment = str(node)
-    ids = set(WALL_ID_RE.findall(fragment))
-    for attr_name in ("data-post-id", "data-postid", "data-post_id"):
-        value = node.get(attr_name) if hasattr(node, "get") else None
-        if value and re.fullmatch(r"-?\d+_\d+", str(value).strip()):
-            ids.add(str(value).strip())
-    return ids
-
-
-def _candidate_containers_for_wall_anchor(anchor):
-    candidates = []
-    current = anchor
-    for level in range(1, 12):
-        current = current.parent
-        if current is None:
-            break
-        ids = _wall_ids_in_node(current)
-        if len(ids) == 1:
-            candidates.append((level, current, ids))
-            if len(safe_fragment_text(current)) > 25000:
-                break
-    return candidates
-
-
-def extract_posts(page_html: str, page_url: str, discovered_by: str = "") -> list[Post]:
-    soup = BeautifulSoup(page_html, "html.parser")
-    candidates: dict[str, list[tuple[int, object]]] = {}
-
-    for attr_name in ("data-post-id", "data-postid", "data-post_id"):
-        for node in soup.find_all(attrs={attr_name: True}):
-            pid = str(node.get(attr_name) or "").strip()
-            if re.fullmatch(r"-?\d+_\d+", pid):
-                candidates.setdefault(pid, []).append((0, node))
-
-    for a in soup.find_all("a", href=True):
-        href = str(a.get("href") or "")
-        pid = post_id_from(href)
-        if not pid:
-            continue
-        for level, node, ids in _candidate_containers_for_wall_anchor(a):
-            if pid in ids:
-                candidates.setdefault(pid, []).append((level, node))
-                if len(candidates[pid]) >= 5:
-                    break
-
-    all_pids = set(WALL_ID_RE.findall(page_html))
-    for pid in all_pids:
-        candidates.setdefault(pid, [])
-
-    found: list[Post] = []
-    for pid in sorted(candidates.keys(), key=lambda x: int(x.split("_")[-1])):
-        options = candidates[pid]
-        best_node, best_score = None, None
-        seen_nodes = set()
-        for level, node in options:
-            marker = id(node)
-            if marker in seen_nodes:
-                continue
-            seen_nodes.add(marker)
-            text = safe_fragment_text(node)
-            fragment = str(node)
-            if not text and not URL_RE.search(fragment):
-                continue
-            ids = _wall_ids_in_node(node)
-            one_post_bonus = 100000 if len(ids) == 1 else 0
-            text_score = min(len(text), 15000)
-            size_penalty = max(0, len(fragment) - 30000)
-            score = one_post_bonus + text_score - size_penalty - level * 100
-            if best_score is None or score > best_score:
-                best_score = score
-                best_node = node
-        if best_node is not None:
-            fragment = str(best_node)
-            text = safe_fragment_text(best_node)
-        else:
-            fragment, text = "", ""
-        found.append(Post(
-            post_id=pid,
-            url=post_url_from_id(pid, page_url),
-            text=text,
-            html_fragment=fragment,
-            page_url=page_url,
-            discovered_by=discovered_by or "wall-id",
-        ))
-
-    if not found:
-        for attr_name in ("data-post-id", "data-postid", "data-post_id"):
-            for node in soup.find_all(attrs={attr_name: True}):
-                pid = str(node.get(attr_name) or "").strip()
-                if pid:
-                    found.append(Post(
-                        post_id=pid,
-                        url=post_url_from_id(pid, page_url),
-                        text=safe_fragment_text(node),
-                        html_fragment=str(node),
-                        page_url=page_url,
-                        discovered_by="data-post-id",
-                    ))
-
-    result, seen_ids = [], set()
-    for post in found:
-        if post.post_id not in seen_ids:
-            seen_ids.add(post.post_id)
-            result.append(post)
-    return result
-
-
-def infer_post_name(text: str, url: str) -> str:
-    lines = [re.sub(r"\s+", " ", line).strip() for line in (text or "").splitlines() if line.strip()]
-    target = clean_url(url)
-    for i, line in enumerate(lines):
-        if target in line or url in line:
-            if i > 0:
-                prev = lines[i - 1]
-                if not is_http_url(prev) and not prev.startswith("#") and len(prev) <= 300:
-                    return prev
-    marker = re.compile(r"(?i)^(?:канал|название|channel|tv|name)\s*[:\-]\s*(.+)$")
-    for line in lines:
-        m = marker.match(line)
-        if m:
-            return m.group(1).strip()[:300]
-    for line in lines:
-        if not is_http_url(line) and not line.startswith("#") and len(line) > 1:
-            return line[:300]
-    return ""
-
-
-def post_urls(post: Post, page_url: str) -> list[str]:
-    source = post.html_fragment or post.text
-    urls = extract_urls(source, page_url)
-    if not urls and post.text:
-        urls = extract_urls(post.text, page_url)
-    return [u for u in urls if clean_url(u) != clean_url(post.url)]
-
-
-def pagination_links(page_html: str, page_url: str) -> list[str]:
-    soup = BeautifulSoup(page_html or "", "html.parser")
-    result = []
-    for a in soup.find_all("a", href=True):
-        href = str(a.get("href") or "").strip()
-        text = safe_fragment_text(a).lower()
-        absolute = clean_url(urljoin(page_url, href))
-        if not is_http_url(absolute):
-            continue
-        query = urlparse(absolute).query.lower()
-        is_page = any(m in query for m in (
-            "offset=", "page=", "start_from=", "cursor=", "section=", "w=wall",
-        ))
-        is_more = any(m in text for m in (
-            "далее", "ещё", "еще", "показать ещё", "показать еще",
-            "загрузить ещё", "загрузить еще", "next", "more",
-        ))
-        if is_page or is_more:
-            result.append(absolute)
-    return result
-
-
-def generate_page_variants(base_url: str, offset: int) -> list[str]:
-    variants = [add_query_param(base_url, "offset", offset)]
-    if offset:
-        variants.append(add_query_param(base_url, "page", max(1, offset // OFFSET_STEP + 1)))
-    p = urlparse(base_url)
-    if p.netloc.lower() == "vk.ru":
-        for host in ("m.vk.ru", "vk.com"):
-            mobile = urlunparse((p.scheme or "https", host, p.path, p.params, p.query, p.fragment))
-            variants.append(add_query_param(mobile, "offset", offset))
-    out, seen = [], set()
-    for url in variants:
-        key = canonical_page_url(url)
-        if key not in seen:
-            seen.add(key)
-            out.append(url)
+def parse_attrs(line: str) -> dict[str, str]:
+    out = {}
+    for m in _ATTR_RE.finditer(line):
+        out[m.group(1)] = next((x for x in m.groups()[1:] if x is not None), "")
     return out
 
 
-def download_text(
-    session: requests.Session,
-    url: str,
-    timeout,
-    max_bytes: int,
-) -> tuple[Optional[str], str, Optional[str], str]:
-    try:
-        response = session.get(url, timeout=timeout, allow_redirects=True, stream=True)
-        final_url = clean_url(response.url or url)
-        content_type = response.headers.get("Content-Type", "")
-        if response.status_code >= 400:
-            response.close()
-            return None, content_type, f"HTTP {response.status_code}", final_url
-        chunks, total = [], 0
-        for chunk in response.iter_content(64 * 1024):
-            if not chunk:
-                continue
-            total += len(chunk)
-            if total > max_bytes:
-                response.close()
-                return None, content_type, f"response exceeds {max_bytes} bytes", final_url
-            chunks.append(chunk)
-        response.close()
-        raw = b"".join(chunks)
-        for encoding in ("utf-8-sig", "utf-8", "cp1251", "latin-1"):
-            try:
-                return raw.decode(encoding), content_type, None, final_url
-            except UnicodeDecodeError:
-                pass
-        return raw.decode("utf-8", errors="replace"), content_type, None, final_url
-    except Exception as exc:
-        return None, "", f"{type(exc).__name__}: {exc}", url
+def parse_extinf_name(line: str) -> str:
+    if "," in line:
+        return line.split(",", 1)[1].strip()
+    return ""
 
 
-def is_m3u_content(text: str, content_type: str, url: str = "") -> bool:
-    sample = (text or "")[:250000].lstrip("\ufeff \t\r\n")
-    ct = (content_type or "").lower()
-    if sample.startswith("#EXTM3U") or "#EXTINF:" in sample.upper():
-        return True
-    if any(x in ct for x in ("mpegurl", "x-mpegurl", "application/vnd.apple.mpegurl")):
-        return True
-    return any(urlparse(url or "").path.lower().endswith(x) for x in M3U_EXTENSIONS)
+def parse_m3u(text: str, source_url: str) -> tuple[list[Channel], list[str]]:
+    channels: list[Channel] = []
+    epg_urls: list[str] = []
+    current: Optional[dict] = None
+    lines = text.replace("\r", "").split("\n")
 
+    # Header-level EPG attributes.
+    for line in lines[:5]:
+        if line.startswith("#EXTM3U"):
+            attrs = parse_attrs(line)
+            for k in ("x-tvg-url", "url-tvg", "tvg-url"):
+                if attrs.get(k):
+                    epg_urls.extend([x.strip() for x in attrs[k].split(",") if x.strip()])
 
-def parse_extinf_attributes(extinf: str) -> dict[str, str]:
-    attrs = {}
-    for match in ATTR_RE.finditer(extinf or ""):
-        key = match.group(1).lower()
-        value = match.group(2) if match.group(2) is not None else match.group(3)
-        attrs[key] = html.unescape(value or "")
-    return attrs
-
-
-def extinf_display_name(extinf: str) -> str:
-    return extinf.split(",", 1)[1].strip() if "," in (extinf or "") else ""
-
-
-def parse_m3u(
-    text: str,
-    playlist_url: str,
-    source_page: str,
-    source_post: str,
-    depth: int,
-    post_text: str,
-) -> tuple[list[Record], list[str]]:
-    lines = (text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    records, nested = [], []
-    current_extinf, attrs = "", {}
-    for raw_line in lines:
-        line = raw_line.strip()
+    for raw in lines:
+        line = raw.strip()
         if not line:
             continue
-        if line.upper().startswith("#EXTINF"):
-            current_extinf = line
-            attrs = parse_extinf_attributes(line)
-            continue
-        if line.startswith("#"):
-            continue
-        if line.startswith("//"):
-            line = normalize_protocol_relative(line, playlist_url)
-        if not is_http_url(line):
-            continue
-        stream_url = clean_url(line)
-        display_name = attrs.get("tvg-name") or extinf_display_name(current_extinf) or ""
-        output_extinf = current_extinf if current_extinf else f"#EXTINF:-1,{display_name or 'Unknown'}"
-        records.append(Record(
-            sequence=0,
-            name=display_name,
-            url=stream_url,
-            source_type="playlist_record",
-            source_page=source_page,
-            source_post=source_post,
-            playlist_url=playlist_url,
-            playlist_depth=depth,
-            extinf=output_extinf,
-            tvg_id=attrs.get("tvg-id", ""),
-            tvg_name=attrs.get("tvg-name", ""),
-            tvg_logo=attrs.get("tvg-logo", ""),
-            group_title=attrs.get("group-title", ""),
-            raw_text=post_text,
-        ))
-        if looks_like_playlist_url(stream_url):
-            nested.append(stream_url)
-        current_extinf, attrs = "", {}
-    return records, nested
-
-
-def run_ffprobe(url: str, timeout: int = FFPROBE_TIMEOUT) -> dict:
-    if not shutil.which("ffprobe"):
-        return {}
-    cmd = [
-        "ffprobe", "-v", "quiet", "-print_format", "json",
-        "-show_streams", "-show_format",
-        "-probesize", "500000", "-analyzeduration", "2000000",
-        "-timeout", str(timeout * 1_000_000), url,
-    ]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 2)
-        if result.returncode != 0:
-            return {"error": (result.stderr or "ffprobe failed")[:100]}
-        data = json.loads(result.stdout)
-        video = next((s for s in data.get("streams", []) if s.get("codec_type") == "video"), None)
-        fmt = data.get("format", {})
-        info = {}
-        if video:
-            info["width"] = int(video.get("width") or 0)
-            info["height"] = int(video.get("height") or 0)
-            info["codec"] = video.get("codec_name", "")
-            info["resolution"] = f"{info['width']}x{info['height']}" if info["width"] else ""
-        if fmt.get("bit_rate"):
-            try:
-                info["bitrate_kbps"] = round(int(fmt["bit_rate"]) / 1000, 1)
-            except Exception:
-                pass
-        return info
-    except subprocess.TimeoutExpired:
-        return {"error": "ffprobe timeout"}
-    except Exception as e:
-        return {"error": str(e)[:80]}
-
-
-def calculate_score(stream: StreamInfo | Record) -> float:
-    if not stream.http_ok:
-        return 0.0
-    lat = stream.latency_ms
-    lat_score = 40 if lat < 200 else 35 if lat < 500 else 25 if lat < 1000 else 15 if lat < 2000 else 5
-    h = stream.height
-    res_score = 40 if h >= 2160 else 35 if h >= 1080 else 25 if h >= 720 else 15 if h >= 480 else 8 if h > 0 else 10
-    br = stream.bitrate_kbps
-    br_score = 15 if br > 5000 else 12 if br > 2500 else 8 if br > 1000 else 4 if br > 0 else 5
-    codec_bonus = 5 if stream.codec in ("h264", "avc", "hevc", "h265") else 0
-    return lat_score + res_score + br_score + codec_bonus
-
-
-async def check_http(
-    session: aiohttp.ClientSession,
-    url: str,
-    timeout: float,
-    headers: dict,
-    ssl_verify: bool,
-) -> tuple[bool, int, float, str]:
-    start = time.perf_counter()
-    try:
-        async with session.get(
-            url, headers=headers, timeout=aiohttp.ClientTimeout(total=timeout),
-            ssl=ssl_verify, allow_redirects=True,
-        ) as resp:
-            await resp.content.read(1024)
-            latency = (time.perf_counter() - start) * 1000
-            ok = 200 <= resp.status < 400
-            return ok, resp.status, latency, "" if ok else f"HTTP {resp.status}"
-    except asyncio.TimeoutError:
-        return False, 0, (time.perf_counter() - start) * 1000, "timeout"
-    except aiohttp.ClientError as e:
-        return False, 0, (time.perf_counter() - start) * 1000, str(e)[:80]
-    except Exception as e:
-        return False, 0, (time.perf_counter() - start) * 1000, str(e)[:80]
-
-
-async def check_one(session, item: StreamInfo | Record, timeout, headers, deep, ssl_verify, sem):
-    async with sem:
-        ok, status, latency, err = await check_http(session, item.url, timeout, headers, ssl_verify)
-        item.http_ok = ok
-        item.status_code = status
-        item.latency_ms = latency
-        item.error = err
-        if ok and deep:
-            loop = asyncio.get_running_loop()
-            probe = await loop.run_in_executor(None, run_ffprobe, item.url)
-            if "error" not in probe:
-                item.width = probe.get("width", 0)
-                item.height = probe.get("height", 0)
-                item.resolution = probe.get("resolution", "")
-                item.codec = probe.get("codec", "")
-                item.bitrate_kbps = probe.get("bitrate_kbps", 0.0)
-            else:
-                item.error = probe.get("error", "")
-        item.score = calculate_score(item)
-
-
-async def process_streams(
-    items: list,
-    workers: int,
-    timeout: float,
-    deep: bool,
-    user_agent: str,
-    ssl_verify: bool,
-) -> None:
-    if not items:
-        return
-    headers = {"User-Agent": user_agent}
-    sem = asyncio.Semaphore(workers)
-    connector = aiohttp.TCPConnector(limit=workers, ttl_dns_cache=300, ssl=ssl_verify)
-    timeout_cfg = aiohttp.ClientTimeout(total=timeout + 5)
-
-    async with aiohttp.ClientSession(connector=connector, timeout=timeout_cfg) as session:
-        if HAS_RICH:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                MofNCompleteColumn(),
-                TimeRemainingColumn(),
-                console=console,
-            ) as progress:
-                task_id = progress.add_task("Checking streams...", total=len(items))
-
-                async def wrapped(item):
-                    await check_one(session, item, timeout, headers, deep, ssl_verify, sem)
-                    progress.advance(task_id)
-
-                await asyncio.gather(*(wrapped(i) for i in items))
-        else:
-            await asyncio.gather(
-                *(check_one(session, i, timeout, headers, deep, ssl_verify, sem) for i in items)
-            )
-
-
-class Collector:
-    def __init__(
-        self,
-        page_url: str,
-        output_dir: Path,
-        max_pages: int = DEFAULT_MAX_PAGES,
-        max_playlist_depth: int = DEFAULT_MAX_PLAYLIST_DEPTH,
-    ):
-        self.page_url = clean_url(page_url) if page_url else ""
-        self.output_dir = output_dir
-        self.max_pages = max_pages
-        self.max_playlist_depth = max_playlist_depth
-        self.session = build_session()
-        self.stats = CollectorStats()
-        self.posts: list[Post] = []
-        self.records: list[Record] = []
-        self.playlist_events: list[dict] = []
-        self.playlist_occurrences: list[dict] = []
-        self.all_post_links: list[dict] = []
-        self.seen_post_ids: set[str] = set()
-        self.active_playlist_chain: list[str] = []
-
-    def fetch_page(self, url: str) -> Optional[str]:
-        self.stats.pages_requested += 1
-        try:
-            response = self.session.get(url, timeout=REQUEST_TIMEOUT, allow_redirects=True)
-            if response.status_code >= 400:
-                self.stats.pages_failed += 1
-                self.stats.errors += 1
-                LOG.error("PAGE HTTP %s: %s", response.status_code, url)
-                return None
-            if len(response.content) > MAX_HTML_BYTES:
-                self.stats.pages_failed += 1
-                self.stats.errors += 1
-                LOG.error("PAGE TOO LARGE: %s", url)
-                return None
-            response.encoding = response.encoding or "utf-8"
-            self.stats.pages_ok += 1
-            return response.text
-        except Exception as exc:
-            self.stats.pages_failed += 1
-            self.stats.errors += 1
-            LOG.error("PAGE ERROR: %s | %s", url, exc)
-            return None
-
-    def collect_playlist(self, url: str, source_post: str, depth: int, post_text: str) -> None:
-        url = clean_url(url)
-        self.playlist_occurrences.append({"url": url, "depth": depth, "source_post": source_post})
-        if sum(1 for x in self.playlist_occurrences if x["url"] == url) > 1:
-            self.stats.repeated_playlist_urls += 1
-        if depth > self.max_playlist_depth:
-            self.playlist_events.append({
-                "url": url, "depth": depth, "status": "max_depth",
-                "records": 0, "source_post": source_post,
-            })
-            return
-        if url in self.active_playlist_chain:
-            self.playlist_events.append({
-                "url": url, "depth": depth, "status": "cycle",
-                "records": 0, "source_post": source_post,
-            })
-            return
-        self.active_playlist_chain.append(url)
-        try:
-            if len(self.active_playlist_chain) > 1:
-                time.sleep(PLAYLIST_DELAY)
-            LOG.info("DOWNLOAD PLAYLIST depth=%d: %s", depth, url)
-            text, content_type, error, final_url = download_text(
-                self.session, url, PLAYLIST_TIMEOUT, MAX_PLAYLIST_BYTES,
-            )
-            self.stats.playlists_requested += 1
-            if error:
-                self.stats.playlists_failed += 1
-                self.stats.errors += 1
-                LOG.error("PLAYLIST ERROR: %s | %s", url, error)
-                self.playlist_events.append({
-                    "url": url, "final_url": final_url, "depth": depth,
-                    "status": "download_error", "records": 0,
-                    "source_post": source_post, "error": error,
-                })
-                return
-            if not is_m3u_content(text or "", content_type, final_url):
-                self.stats.playlists_not_m3u += 1
-                LOG.warning("NOT M3U: %s | ct=%s", url, content_type)
-                self.playlist_events.append({
-                    "url": url, "final_url": final_url, "depth": depth,
-                    "status": "not_m3u", "records": 0,
-                    "source_post": source_post, "content_type": content_type,
-                })
-                return
-            self.stats.playlists_ok += 1
-            records, nested = parse_m3u(
-                text or "", final_url or url, self.page_url or "public",
-                source_post, depth, post_text,
-            )
-            self.stats.playlist_records += len(records)
-            self.records.extend(records)
-            self.playlist_events.append({
-                "url": url, "final_url": final_url, "depth": depth,
-                "status": "parsed", "records": len(records), "nested": len(nested),
-                "source_post": source_post, "content_type": content_type,
-            })
-            LOG.info("PLAYLIST PARSED: records=%d nested=%d", len(records), len(nested))
-            for nested_url in nested:
-                self.stats.nested_playlist_urls += 1
-                self.collect_playlist(nested_url, source_post, depth + 1, post_text)
-        finally:
-            self.active_playlist_chain.pop()
-
-    def process_post(self, post: Post) -> None:
-        self.stats.posts_processed += 1
-        if looks_like_embedded_m3u(post.text):
-            LOG.info("EMBEDDED M3U in post %s", post.post_id)
-            records, nested = parse_m3u(
-                post.text, post.url, post.page_url or self.page_url,
-                post.url, 0, post.text,
-            )
-            self.stats.playlist_records += len(records)
-            self.records.extend(records)
-            for nested_url in nested:
-                self.stats.nested_playlist_urls += 1
-                self.collect_playlist(nested_url, post.url, 1, post.text)
-
-        urls = post_urls(post, self.page_url)
-        self.stats.urls_found_in_posts += len(urls)
-        for url in urls:
-            self.stats.all_links_found += 1
-            if looks_like_playlist_url(url):
-                self.stats.playlist_urls_found += 1
-                self.all_post_links.append({
-                    "post_id": post.post_id, "post_url": post.url,
-                    "url": url, "kind": "playlist",
-                })
-                self.collect_playlist(url, post.url, 0, post.text)
-                continue
-            if looks_like_direct_stream(url):
-                self.stats.direct_stream_urls += 1
-                name = infer_post_name(post.text, url)
-                self.records.append(Record(
-                    sequence=0, name=name, url=url,
-                    source_type="direct_post_stream",
-                    source_page=post.page_url or self.page_url,
-                    source_post=post.url, raw_text=post.text,
-                ))
-                self.all_post_links.append({
-                    "post_id": post.post_id, "post_url": post.url,
-                    "url": url, "kind": "direct_stream",
-                })
-            else:
-                self.stats.non_stream_links += 1
-                self.all_post_links.append({
-                    "post_id": post.post_id, "post_url": post.url,
-                    "url": url, "kind": "other",
-                })
-
-    def crawl_group(self) -> None:
-        if not self.page_url:
-            LOG.info("No VK URL — skipping crawl")
-            return
-        LOG.info("=" * 60)
-        LOG.info("FULL GROUP CRAWL: %s", self.page_url)
-        LOG.info("MAX PAGES: %d", self.max_pages)
-        LOG.info("=" * 60)
-
-        queue: deque[tuple[str, str]] = deque()
-        queued_pages: set[str] = set()
-
-        def enqueue(url: str, reason: str) -> None:
-            url = clean_url(url)
-            if not is_http_url(url):
-                return
-            key = canonical_page_url(url)
-            if key in queued_pages:
-                return
-            queued_pages.add(key)
-            queue.append((url, reason))
-
-        enqueue(self.page_url, "initial")
-        next_offset = 0
-        empty_rounds = 0
-        processed_pages = 0
-
-        while queue and processed_pages < self.max_pages:
-            current_url, reason = queue.popleft()
-            processed_pages += 1
-            if processed_pages > 1:
-                time.sleep(VK_DELAY)
-            LOG.info("PAGE %d/%d | reason=%s | %s", processed_pages, self.max_pages, reason, current_url)
-            page = self.fetch_page(current_url)
-            if page is None:
-                continue
-
-            before_records = len(self.records)
-            found_posts = extract_posts(page, current_url, reason)
-            new_posts_this_page = 0
-            for post in found_posts:
-                if post.post_id in self.seen_post_ids:
-                    self.stats.repeated_post_ids += 1
-                    continue
-                self.seen_post_ids.add(post.post_id)
-                self.posts.append(post)
-                self.stats.posts_found += 1
-                new_posts_this_page += 1
-                self.process_post(post)
-
-            added = len(self.records) - before_records
-            LOG.info(
-                "POSTS: detected=%d new=%d total=%d | RECORDS +%d total=%d",
-                len(found_posts), new_posts_this_page, len(self.posts),
-                added, len(self.records),
-            )
-
-            for link in pagination_links(page, current_url):
-                enqueue(link, "vk-pagination")
-            next_offset += OFFSET_STEP
-            for variant in generate_page_variants(self.page_url, next_offset):
-                enqueue(variant, f"offset={next_offset}")
-
-            if new_posts_this_page == 0:
-                empty_rounds += 1
-            else:
-                empty_rounds = 0
-            if empty_rounds >= EMPTY_PAGE_LIMIT:
-                LOG.info("STOP: %d consecutive pages without NEW post_id.", EMPTY_PAGE_LIMIT)
-                break
-
-        self.stats.total_records = len(self.records)
-        LOG.info(
-            "CRAWL FINISHED: pages=%d posts=%d records=%d",
-            processed_pages, len(self.posts), len(self.records),
-        )
-
-    def load_public_sources(self, sources: list[str]) -> None:
-        LOG.info("DISCOVER: loading %d public sources (max RU/CIS)...", len(sources))
-        loaded = 0
-        for src in sources:
-            try:
-                text, ct, err, final = download_text(
-                    self.session, src, PLAYLIST_TIMEOUT, MAX_PLAYLIST_BYTES,
-                )
-                if err or not is_m3u_content(text or "", ct, final):
-                    LOG.warning("DISCOVER skip %s: %s", src, err or "not m3u")
-                    continue
-                records, _ = parse_m3u(
-                    text or "", final or src, "public", "discover", 0, "",
-                )
-                filtered = [r for r in records if not is_adult(r.name, r.group_title)]
-                self.records.extend(filtered)
-                loaded += 1
-                LOG.info("DISCOVER %s → %d records", src, len(filtered))
-            except Exception as e:
-                LOG.error("DISCOVER error %s: %s", src, e)
-        self.stats.public_sources_loaded = loaded
-        LOG.info("DISCOVER done: %d sources, total records %d", loaded, len(self.records))
-
-    def save_raw(self) -> None:
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        for i, rec in enumerate(self.records, 1):
-            rec.sequence = i
-
-        with (self.output_dir / "combined.m3u").open("w", encoding="utf-8", newline="\n") as f:
-            f.write('#EXTM3U x-no-dedup="1" x-top-alts="12"\n')
-            for rec in self.records:
-                extinf = rec.extinf.strip()
-                if not extinf:
-                    attrs = []
-                    if rec.tvg_id:
-                        attrs.append(f'tvg-id="{rec.tvg_id}"')
-                    if rec.tvg_name:
-                        attrs.append(f'tvg-name="{rec.tvg_name}"')
-                    if rec.tvg_logo:
-                        attrs.append(f'tvg-logo="{rec.tvg_logo}"')
-                    if rec.group_title:
-                        attrs.append(f'group-title="{rec.group_title}"')
-                    name = rec.name or rec.tvg_name or "Unknown"
-                    prefix = "#EXTINF:-1" + (" " + " ".join(attrs) if attrs else "")
-                    extinf = f"{prefix},{name}"
-                f.write(extinf + "\n")
-                f.write(rec.url + "\n")
-
-        with (self.output_dir / "records.jsonl").open("w", encoding="utf-8") as f:
-            for rec in self.records:
-                f.write(json.dumps(asdict(rec), ensure_ascii=False) + "\n")
-
-        with (self.output_dir / "posts.jsonl").open("w", encoding="utf-8") as f:
-            for post in self.posts:
-                f.write(json.dumps(asdict(post), ensure_ascii=False) + "\n")
-
-        with (self.output_dir / "posts_urls.txt").open("w", encoding="utf-8", newline="\n") as f:
-            for post in self.posts:
-                f.write(post.url + "\n")
-
-        with (self.output_dir / "links.jsonl").open("w", encoding="utf-8") as f:
-            for item in self.all_post_links:
-                f.write(json.dumps(item, ensure_ascii=False) + "\n")
-
-        with (self.output_dir / "playlists.jsonl").open("w", encoding="utf-8") as f:
-            for item in self.playlist_events:
-                f.write(json.dumps(item, ensure_ascii=False) + "\n")
-
-        with (self.output_dir / "playlists_found.jsonl").open("w", encoding="utf-8") as f:
-            for item in self.playlist_occurrences:
-                f.write(json.dumps(item, ensure_ascii=False) + "\n")
-
-        with (self.output_dir / "playlists.txt").open("w", encoding="utf-8", newline="\n") as f:
-            for item in self.playlist_occurrences:
-                f.write(str(item["url"]) + "\n")
-
-        with (self.output_dir / "streams.txt").open("w", encoding="utf-8", newline="\n") as f:
-            for rec in self.records:
-                f.write(rec.url + "\n")
-
-        self.stats.total_records = len(self.records)
-        stats = asdict(self.stats)
-        stats["rules"] = {
-            "stream_deduplication": False,
-            "channel_deduplication": False,
-            "record_deduplication": False,
-            "download_playlist_before_parse": True,
-            "playlist_url_written_as_stream": False,
-            "embedded_m3u_in_post_text": True,
-            "max_playlist_depth": self.max_playlist_depth,
-            "ultra_checking": True,
-            "top_alts_default": 12,
-            "public_sources_count": len(PUBLIC_INTERNET_SOURCES),
-        }
-        stats["source"] = {"url": self.page_url or "discover-only", "public_only": True}
-        with (self.output_dir / "stats.json").open("w", encoding="utf-8") as f:
-            json.dump(stats, f, ensure_ascii=False, indent=2)
-
-        with (self.output_dir / "summary.txt").open("w", encoding="utf-8") as f:
-            f.write("VK IPTV + ULTRA COLLECTOR v3.1\n")
-            f.write("=" * 70 + "\n")
-            f.write(f"Source: {self.page_url or 'discover-only'}\n")
-            f.write(f"Posts: {len(self.posts)}\n")
-            f.write(f"Records: {len(self.records)}\n")
-            f.write(f"Public sources loaded: {self.stats.public_sources_loaded}\n")
-            f.write(f"Playlist URLs: {self.stats.playlist_urls_found}\n")
-            f.write(f"Playlists OK: {self.stats.playlists_ok}\n")
-            f.write(f"Direct streams: {self.stats.direct_stream_urls}\n")
-            f.write(f"Errors: {self.stats.errors}\n")
-            f.write("\nNO DEDUPLICATION: YES\n")
-            f.write("EMBEDDED M3U: YES\n")
-            f.write("TOP ALTS (reserves): 12\n")
-            f.write(f"PUBLIC SOURCES: {len(PUBLIC_INTERNET_SOURCES)}\n")
-            f.write("ULTRA CHECK: --check\n")
-
-        LOG.info("RAW SAVED → %s", self.output_dir)
-
-    def build_channels_and_check(
-        self,
-        fuzzy: float,
-        max_alts: int,
-        workers: int,
-        timeout: float,
-        deep: bool,
-        user_agent: str,
-        ssl_verify: bool,
-        top_n: int,
-    ) -> None:
-        LOG.info("ULTRA STAGE: fuzzy + check (top=%d, max_alts=%d)...", top_n, max_alts)
-        groups: dict[str, Channel] = {}
-        key_to_display: dict[str, str] = {}
-        seen_urls: set[str] = set()
-
-        for rec in self.records:
-            if is_adult(rec.name, rec.group_title):
-                continue
-            url = rec.url.strip()
-            if not url or url in seen_urls:
-                continue
-            seen_urls.add(url)
-            name = rec.name or "Unknown"
-            matched = find_best_key(name, key_to_display, fuzzy)
-            if matched is None:
-                matched = normalize_name(name) or name.lower()
-                key_to_display[matched] = name
-                groups[matched] = Channel(
-                    name=name,
-                    group=rec.group_title or "Undefined",
-                    logo=rec.tvg_logo or "",
-                    tvg_id=rec.tvg_id or "",
-                )
-            ch = groups[matched]
-            if len(ch.streams) < max_alts:
-                ch.streams.append(StreamInfo(
-                    url=url,
-                    source=rec.source_type or rec.playlist_url or "",
-                ))
-
-        self.stats.channels_after_fuzzy = len(groups)
-        LOG.info("Unique channels after fuzzy: %d", len(groups))
-
-        all_streams = [s for ch in groups.values() for s in ch.streams]
-        asyncio.run(process_streams(
-            all_streams, workers, timeout, deep, user_agent, ssl_verify,
-        ))
-
-        self.stats.streams_checked = len(all_streams)
-        self.stats.streams_alive = sum(1 for s in all_streams if s.http_ok)
-
-        out = self.output_dir
-
-        def write_ranked(mode: str, path: Path, top: int = 1) -> int:
-            lines = ["#EXTM3U"]
-            count = 0
-            for ch in sorted(groups.values(), key=lambda c: c.name.lower()):
-                alive = [s for s in ch.alive_streams if s.score >= 0]
-                if not alive:
-                    continue
-                if mode == "best":
-                    selected = alive[:1]
-                elif mode == "stable":
-                    selected = [s for s in alive if s.latency_ms < 1500][:1] or alive[:1]
-                elif mode == "online":
-                    selected = alive
-                else:
-                    selected = alive[:top]
-                for idx, s in enumerate(selected):
-                    attrs = []
-                    if ch.tvg_id:
-                        attrs.append(f'tvg-id="{ch.tvg_id}"')
-                    if ch.logo:
-                        attrs.append(f'tvg-logo="{ch.logo}"')
-                    attrs.append(f'group-title="{ch.group}"')
-                    extra = ""
-                    if len(selected) > 1:
-                        extra = f" [{idx+1}/{len(selected)}]"
-                    if s.resolution:
-                        extra += f" {s.resolution}"
-                    if s.latency_ms < 9000:
-                        extra += f" {int(s.latency_ms)}ms"
-                    name = f"{ch.name}{extra}"
-                    lines.append(f'#EXTINF:-1 {" ".join(attrs)},{name}')
-                    lines.append(s.url)
-                    count += 1
-            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            return count
-
-        n_best = write_ranked("best", out / "best.m3u")
-        n_stable = write_ranked("stable", out / "stable.m3u")
-        n_online = write_ranked("online", out / "online.m3u")
-        n_alts = write_ranked("all", out / "all_with_alts.m3u", top=top_n)
-
-        LOG.info(
-            "Ranked: best=%d stable=%d online=%d alts(up to %d)=%d",
-            n_best, n_stable, n_online, top_n, n_alts,
-        )
-
-        if HAS_RICH:
-            table = Table(title="Ultra Check Summary")
-            table.add_column("Metric", style="cyan")
-            table.add_column("Value", style="green")
-            table.add_row("Channels (fuzzy)", str(len(groups)))
-            table.add_row("Channels with live", str(sum(1 for c in groups.values() if c.alive_streams)))
-            table.add_row("Streams checked", str(self.stats.streams_checked))
-            table.add_row("Working streams", str(self.stats.streams_alive))
-            table.add_row("Top alts per channel", str(top_n))
-            console.print(table)
-
-        data = {
-            k: {
-                "name": ch.name,
-                "group": ch.group,
-                "streams": [asdict(s) for s in ch.streams],
+        if line.startswith("#EXTINF"):
+            attrs = parse_attrs(line)
+            current = {
+                "name": parse_extinf_name(line) or attrs.get("tvg-name") or "Unknown",
+                "tvg_id": attrs.get("tvg-id", ""),
+                "tvg_name": attrs.get("tvg-name", ""),
+                "logo": attrs.get("tvg-logo", ""),
+                "group": attrs.get("group-title", ""),
+                "country": attrs.get("tvg-country", ""),
+                "language": attrs.get("tvg-language", ""),
             }
-            for k, ch in groups.items()
-        }
-        (out / "results.json").write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8",
-        )
+        elif not line.startswith("#") and current is not None and re.match(r"https?://", line, re.I):
+            name = clean_text(current["name"])
+            if not name or is_bad_name(name):
+                current = None
+                continue
+            score = russian_score(name, current["group"], current["country"], current["language"], source_url)
+            ch = Channel(
+                key=canonical_key(name, current["tvg_id"]),
+                name=name,
+                original_names=[name],
+                tvg_id=current["tvg_id"],
+                tvg_name=current["tvg_name"] or name,
+                logo=current["logo"],
+                group=current["group"],
+                country=current["country"],
+                language=current["language"],
+                russian_priority=score >= 6,
+                sources={source_url},
+            )
+            ch.add_stream(Stream(url=line, source=source_url))
+            channels.append(ch)
+            current = None
+    return channels, epg_urls
 
-    def run(self, do_check: bool = False, discover: bool = False, **check_kwargs) -> None:
-        self.crawl_group()
-        if discover:
-            self.load_public_sources(PUBLIC_INTERNET_SOURCES)
-        self.save_raw()
-        if do_check:
-            self.build_channels_and_check(**check_kwargs)
-        LOG.info("=" * 60)
-        LOG.info(
-            "FINISHED | posts=%d records=%d alive=%d public=%d",
-            len(self.posts), len(self.records),
-            self.stats.streams_alive, self.stats.public_sources_loaded,
+# ---------------------------------------------------------------------------
+# DISCOVERY
+# ---------------------------------------------------------------------------
+
+
+def discover_iptv_org_playlists() -> list[str]:
+    """Extract all public playlist URLs from iptv-org PLAYLISTS.md.
+
+    This automatically discovers Russian subdivisions/cities and all other
+    country playlists as the upstream repository changes.
+    """
+    try:
+        text = fetch_text(IPTV_ORG_PLAYLISTS, max_bytes=15 * 1024 * 1024)
+    except Exception as e:
+        log.warning("iptv-org playlist index failed: %s", e)
+        return []
+    urls = set(re.findall(r"https://iptv-org\.github\.io/iptv/[^`\s)]+\.m3u", text))
+    return sorted(urls)
+
+
+def load_sources_file(path: Optional[str]) -> list[str]:
+    if not path:
+        return []
+    p = Path(path)
+    if not p.exists():
+        log.warning("sources file not found: %s", p)
+        return []
+    result = []
+    for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and re.match(r"https?://", line):
+            result.append(line)
+    return result
+
+
+def build_source_list(extra_file: Optional[str]) -> list[str]:
+    urls = list(BASE_SOURCES)
+    urls.extend(load_sources_file(extra_file))
+    urls.extend(discover_iptv_org_playlists())
+    # de-duplicate while preserving order
+    seen = set()
+    out = []
+    for u in urls:
+        k = normalize_url(u)
+        if k and k not in seen:
+            seen.add(k)
+            out.append(u)
+    # Russian first, then everything else.
+    out.sort(key=lambda u: (0 if "/ru" in u.lower() or "russia" in u.lower() else 1, u))
+    return out
+
+# ---------------------------------------------------------------------------
+# MERGE / CHANNEL MATCHING
+# ---------------------------------------------------------------------------
+
+
+def similarity(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    aa = set(a.split())
+    bb = set(b.split())
+    if not aa or not bb:
+        return 0.0
+    j = len(aa & bb) / len(aa | bb)
+    if a in b or b in a:
+        j = max(j, 0.86)
+    return j
+
+
+def find_channel(channels: dict[str, Channel], incoming: Channel) -> Optional[Channel]:
+    # Strong ID match.
+    if incoming.tvg_id:
+        key = canonical_key(incoming.name, incoming.tvg_id)
+        if key in channels:
+            return channels[key]
+
+    key = canonical_key(incoming.name)
+    if key in channels:
+        return channels[key]
+
+    # Controlled fuzzy merge. Do not compare against all 20k for every item.
+    # Index by first two normalized tokens.
+    tokens = normalize_name(incoming.name).split()
+    if not tokens:
+        return None
+    prefix = " ".join(tokens[:2])
+    candidates = [c for c in channels.values() if normalize_name(c.name).startswith(prefix)]
+    best = None
+    best_score = 0.0
+    for c in candidates[:100]:
+        s = similarity(normalize_name(incoming.name), normalize_name(c.name))
+        if s > best_score:
+            best, best_score = c, s
+    return best if best_score >= 0.90 else None
+
+
+def merge_channel(dst: Channel, src: Channel) -> None:
+    for n in src.original_names:
+        if n not in dst.original_names:
+            dst.original_names.append(n)
+    if not dst.tvg_id and src.tvg_id:
+        dst.tvg_id = src.tvg_id
+    if not dst.tvg_name and src.tvg_name:
+        dst.tvg_name = src.tvg_name
+    if not dst.logo and src.logo:
+        dst.logo = src.logo
+    if not dst.group and src.group:
+        dst.group = src.group
+    if not dst.country and src.country:
+        dst.country = src.country
+    if not dst.language and src.language:
+        dst.language = src.language
+    dst.russian_priority = dst.russian_priority or src.russian_priority
+    dst.sources.update(src.sources)
+    for s in src.streams.values():
+        dst.add_stream(s)
+
+
+def aggregate(parsed: Iterable[tuple[str, list[Channel], list[str]]]) -> tuple[dict[str, Channel], list[str]]:
+    channels: dict[str, Channel] = {}
+    epg_urls: list[str] = []
+    index: dict[str, Channel] = {}
+    for source_url, items, source_epg in parsed:
+        epg_urls.extend(source_epg)
+        for incoming in items:
+            # Fast exact identity first.
+            found = find_channel(channels, incoming)
+            if found is None:
+                channels[incoming.key] = incoming
+                found = incoming
+            else:
+                merge_channel(found, incoming)
+            # Refresh simple index aliases.
+            index[canonical_key(found.name)] = found
+            if found.tvg_id:
+                index[canonical_key(found.name, found.tvg_id)] = found
+    return channels, list(dict.fromkeys(epg_urls))
+
+# ---------------------------------------------------------------------------
+# STREAM CHECKING / SQLITE CACHE
+# ---------------------------------------------------------------------------
+
+
+def init_db() -> sqlite3.Connection:
+    con = sqlite3.connect(DB, check_same_thread=False)
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA synchronous=NORMAL")
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS stream_health (
+            url TEXT PRIMARY KEY,
+            checked INTEGER NOT NULL,
+            alive INTEGER NOT NULL,
+            status INTEGER,
+            latency_ms INTEGER,
+            content_type TEXT,
+            successes INTEGER NOT NULL DEFAULT 0,
+            failures INTEGER NOT NULL DEFAULT 0
         )
-        LOG.info("=" * 60)
+    """)
+    con.commit()
+    return con
+
+
+def cached_health(con: sqlite3.Connection, url: str) -> Optional[dict]:
+    row = con.execute("SELECT url,checked,alive,status,latency_ms,content_type,successes,failures FROM stream_health WHERE url=?", (url,)).fetchone()
+    if not row:
+        return None
+    if int(time.time()) - row[1] > CACHE_TTL:
+        return None
+    return dict(zip(("url","checked","alive","status","latency_ms","content_type","successes","failures"), row))
+
+
+def check_stream(s: Stream) -> Stream:
+    start = time.monotonic()
+    req = urllib.request.Request(s.url, headers={
+        "User-Agent": USER_AGENT,
+        "Accept": "*/*",
+        "Connection": "close",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=READ_TIMEOUT) as r:
+            status = getattr(r, "status", 200)
+            content_type = r.headers.get("Content-Type", "")
+            # Read only a small prefix. For HLS this confirms that the endpoint
+            # actually returns data without downloading the media.
+            prefix = r.read(4096)
+            if not prefix:
+                raise IOError("empty response")
+            s.alive = 200 <= status < 400
+            s.status = status
+            s.content_type = content_type
+            s.latency_ms = int((time.monotonic() - start) * 1000)
+            s.checked_at = int(time.time())
+            if s.alive:
+                s.successes += 1
+            else:
+                s.failures += 1
+    except Exception:
+        s.alive = False
+        s.status = None
+        s.latency_ms = int((time.monotonic() - start) * 1000)
+        s.checked_at = int(time.time())
+        s.failures += 1
+    return s
+
+
+def stream_score(s: Stream) -> float:
+    if s.alive is False:
+        return -1000.0
+    score = 0.0
+    if s.alive is True:
+        score += 100
+    if s.latency_ms is not None:
+        score += max(0, 40 - s.latency_ms / 100)
+    if s.content_type and ("mpegurl" in s.content_type.lower() or "m3u8" in s.content_type.lower()):
+        score += 10
+    score += min(s.successes * 2, 20)
+    score -= min(s.failures * 5, 30)
+    return score
+
+
+def validate_streams(channels: dict[str, Channel], workers: int, enabled: bool) -> None:
+    if not enabled:
+        log.info("STREAM CHECK: disabled")
+        return
+    con = init_db()
+    all_streams: list[Stream] = []
+    for ch in channels.values():
+        for s in ch.streams.values():
+            all_streams.append(s)
+    log.info("STREAM CHECK: %d unique URLs, workers=%d", len(all_streams), workers)
+
+    todo = []
+    for s in all_streams:
+        c = cached_health(con, s.key())
+        if c:
+            s.alive = bool(c["alive"])
+            s.status = c["status"]
+            s.latency_ms = c["latency_ms"]
+            s.content_type = c["content_type"] or ""
+            s.checked_at = c["checked"]
+            s.successes = c["successes"]
+            s.failures = c["failures"]
+        else:
+            todo.append(s)
+
+    log.info("STREAM CHECK: cache hit=%d network=%d", len(all_streams)-len(todo), len(todo))
+    if todo:
+        with cf.ThreadPoolExecutor(max_workers=workers) as ex:
+            for i, s in enumerate(ex.map(check_stream, todo), 1):
+                if i % 1000 == 0:
+                    log.info("STREAM CHECK: %d/%d", i, len(todo))
+
+    rows = []
+    for s in all_streams:
+        rows.append((s.key(), int(s.checked_at or time.time()), int(bool(s.alive)), s.status, s.latency_ms, s.content_type, s.successes, s.failures))
+    con.executemany("INSERT OR REPLACE INTO stream_health(url,checked,alive,status,latency_ms,content_type,successes,failures) VALUES(?,?,?,?,?,?,?,?)", rows)
+    con.commit()
+    con.close()
+
+# ---------------------------------------------------------------------------
+# EPG
+# ---------------------------------------------------------------------------
+
+
+def load_xmltv(url: str) -> dict[str, dict]:
+    log.info("EPG FETCH: %s", url)
+    try:
+        data = request_bytes(url, max_bytes=150 * 1024 * 1024)
+        if url.lower().split("?",1)[0].endswith(".gz") or data[:2] == b"\x1f\x8b":
+            data = gzip.decompress(data)
+        root = ET.fromstring(data)
+    except Exception as e:
+        log.warning("EPG failed %s: %s", url, e)
+        return {}
+    out = {}
+    for ch in root.findall("channel"):
+        cid = ch.attrib.get("id", "").strip()
+        if not cid:
+            continue
+        names = [clean_text(x.text or "") for x in ch.findall("display-name") if (x.text or "").strip()]
+        icon = ch.find("icon")
+        logo = icon.attrib.get("src", "") if icon is not None else ""
+        out[cid] = {"id": cid, "names": names, "logo": logo}
+    return out
+
+
+def epg_match(channels: dict[str, Channel], epg_sets: list[tuple[str, dict[str, dict]]]) -> None:
+    # Priority is represented by list order: epg.one first.
+    for ch in channels.values():
+        best = None
+        best_score = 0.0
+        # Existing tvg-id is a strong exact candidate.
+        for source_name, epg in epg_sets:
+            if ch.tvg_id and ch.tvg_id in epg:
+                best = (source_name, epg[ch.tvg_id], 1.0)
+                break
+            target = normalize_name(ch.name)
+            if not target:
+                continue
+            for item in epg.values():
+                for n in item["names"]:
+                    s = similarity(target, normalize_name(n))
+                    if s > best_score:
+                        best_score = s
+                        best = (source_name, item, s)
+                if best_score >= 0.98:
+                    break
+            if best_score >= 0.98:
+                break
+        if best and best[2] >= 0.82:
+            src, item, score = best
+            ch.tvg_id = item["id"]
+            ch.epg_source = src
+            ch.epg_confidence = score
+            if not ch.logo and item.get("logo"):
+                ch.logo = item["logo"]
+
+# ---------------------------------------------------------------------------
+# OUTPUT
+# ---------------------------------------------------------------------------
+
+
+def xml_escape(s: str) -> str:
+    return (s or "").replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def m3u_attr(s: str) -> str:
+    return clean_text(s).replace('"', "'")
+
+
+def write_m3u(channels: list[Channel], path: Path, all_streams: bool, min_streams: int = 0) -> int:
+    lines = ["#EXTM3U"]
+    count = 0
+    for ch in channels:
+        streams = sorted(ch.stream_list(), key=lambda x: stream_score(x), reverse=True)
+        if not all_streams:
+            streams = streams[:1]
+        if min_streams and len(streams) < min_streams:
+            continue
+        for rank, s in enumerate(streams, 1):
+            suffix = f" [ALT {rank}]" if rank > 1 else ""
+            attrs = [
+                f'tvg-id="{m3u_attr(ch.tvg_id)}"' if ch.tvg_id else '',
+                f'tvg-name="{m3u_attr(ch.tvg_name or ch.name)}"',
+                f'tvg-logo="{m3u_attr(ch.logo)}"' if ch.logo else '',
+                f'group-title="{m3u_attr(ch.group or ("Россия" if ch.russian_priority else "IPTV"))}"',
+                f'stream-rank="{rank}"',
+                f'backup-count="{max(0, len(streams)-1)}"',
+            ]
+            attrs = " ".join(x for x in attrs if x)
+            lines.append(f'#EXTINF:-1 {attrs},{m3u_attr(ch.name)}{suffix}')
+            lines.append(s.url)
+            count += 1
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return count
+
+
+def write_json(channels: list[Channel], path: Path) -> None:
+    payload = []
+    for c in channels:
+        d = {
+            "key": c.key,
+            "name": c.name,
+            "original_names": c.original_names,
+            "tvg_id": c.tvg_id,
+            "tvg_name": c.tvg_name,
+            "logo": c.logo,
+            "group": c.group,
+            "country": c.country,
+            "language": c.language,
+            "russian_priority": c.russian_priority,
+            "epg_source": c.epg_source,
+            "epg_confidence": c.epg_confidence,
+            "stream_count": len(c.streams),
+            "alive_stream_count": sum(1 for s in c.streams.values() if s.alive),
+            "streams": [asdict(s) for s in sorted(c.streams.values(), key=stream_score, reverse=True)],
+            "sources": sorted(c.sources),
+        }
+        payload.append(d)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def write_jsonl(channels: list[Channel], path: Path) -> None:
+    with path.open("w", encoding="utf-8") as f:
+        for c in channels:
+            f.write(json.dumps({
+                "key": c.key, "name": c.name, "tvg_id": c.tvg_id,
+                "logo": c.logo, "group": c.group, "russian": c.russian_priority,
+                "epg_source": c.epg_source, "epg_confidence": c.epg_confidence,
+                "streams": [asdict(s) for s in sorted(c.streams.values(), key=stream_score, reverse=True)],
+            }, ensure_ascii=False) + "\n")
+
+
+def write_txt(channels: list[Channel], path: Path) -> None:
+    with path.open("w", encoding="utf-8") as f:
+        for c in channels:
+            streams = sorted(c.streams.values(), key=stream_score, reverse=True)
+            f.write(f"{c.name} | EPG={c.tvg_id or '-'} | streams={len(streams)} | alive={sum(1 for s in streams if s.alive)}\n")
+            for i, s in enumerate(streams, 1):
+                f.write(f"  {i:03d}. {s.url}\n")
+
+
+def write_stats(channels: list[Channel], source_count: int, epg_count: int, path: Path) -> dict:
+    ru = [c for c in channels if c.russian_priority]
+    stream_total = sum(len(c.streams) for c in channels)
+    alive_total = sum(sum(1 for s in c.streams.values() if s.alive) for c in channels)
+    with12 = sum(1 for c in channels if sum(1 for s in c.streams.values() if s.alive is not False) >= MIN_ALTERNATIVES)
+    with12_alive = sum(1 for c in channels if sum(1 for s in c.streams.values() if s.alive is True) >= MIN_ALTERNATIVES)
+    stats = {
+        "channels": len(channels),
+        "russian_channels": len(ru),
+        "target_channels": TARGET_CHANNELS,
+        "target_russian_channels": TARGET_RU,
+        "stream_urls": stream_total,
+        "alive_stream_urls": alive_total,
+        "channels_with_12plus_pool": with12,
+        "channels_with_12plus_alive": with12_alive,
+        "sources": source_count,
+        "epg_sources": epg_count,
+        "channels_with_epg": sum(1 for c in channels if c.tvg_id),
+        "epg_matched_by_epg_one": sum(1 for c in channels if c.epg_source == "epg.one"),
+        "epg_matched_by_teleguide": sum(1 for c in channels if c.epg_source == "teleguide"),
+        "generated_at": int(time.time()),
+    }
+    path.write_text(json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
+    return stats
+
+# ---------------------------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------------------------
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="RU IPTV Mega Parser")
+    p.add_argument("--sources-file", default=None)
+    p.add_argument("--workers", type=int, default=CHECK_WORKERS)
+    p.add_argument("--fetch-workers", type=int, default=FETCH_WORKERS)
+    p.add_argument("--max-channels", type=int, default=0, help="0 = unlimited")
+    p.add_argument("--no-check", action="store_true")
+    p.add_argument("--no-iptv-org-expand", action="store_true")
+    return p.parse_args()
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description=(
-            "VK IPTV Collector + Ultra Checker v3.1 — "
-            "полный сбор + максимум альтернатив (12) + расширенный RU-поиск"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__,
+    args = parse_args()
+    log.info("=" * 72)
+    log.info("RU IPTV MEGA PARSER")
+    log.info("TARGET: >= %d channels / >= %d Russian", TARGET_CHANNELS, TARGET_RU)
+    log.info("ALTERNATIVES TARGET: >= %d per channel, no upper limit", MIN_ALTERNATIVES)
+    log.info("=" * 72)
+
+    sources = list(BASE_SOURCES)
+    sources.extend(load_sources_file(args.sources_file))
+    if not args.no_iptv_org_expand:
+        sources.extend(discover_iptv_org_playlists())
+    sources = list(dict.fromkeys(normalize_url(x) for x in sources if x))
+    log.info("SOURCES: %d", len(sources))
+
+    parsed: list[tuple[str, list[Channel], list[str]]] = []
+    source_epg_urls: list[str] = []
+
+    def fetch_parse(url: str):
+        try:
+            text = fetch_text(url)
+            items, epgs = parse_m3u(text, url)
+            return url, items, epgs, None
+        except Exception as e:
+            return url, [], [], repr(e)
+
+    with cf.ThreadPoolExecutor(max_workers=max(1, args.fetch_workers)) as ex:
+        futures = [ex.submit(fetch_parse, u) for u in sources]
+        for i, fut in enumerate(cf.as_completed(futures), 1):
+            url, items, epgs, err = fut.result()
+            if err:
+                log.warning("SOURCE FAIL [%d/%d] %s :: %s", i, len(futures), url, err)
+                continue
+            parsed.append((url, items, epgs))
+            source_epg_urls.extend(epgs)
+            log.info("SOURCE %d/%d: %s -> records=%d epg=%d", i, len(futures), url, len(items), len(epgs))
+
+    channels, m3u_epgs = aggregate(parsed)
+    source_epg_urls.extend(m3u_epgs)
+    log.info("CHANNELS AFTER MERGE: %d", len(channels))
+
+    # If max-channels is set, keep Russian channels first, then the rest.
+    if args.max_channels and len(channels) > args.max_channels:
+        ordered = sorted(channels.values(), key=lambda c: (not c.russian_priority, -len(c.streams), c.name))[:args.max_channels]
+        channels = {c.key: c for c in ordered}
+
+    # EPG priority: epg.one, teleguide, then URLs embedded in M3U.
+    epg_urls = [u for _, _, u in EPG_SOURCES] + EXTRA_EPG + source_epg_urls
+    epg_urls = list(dict.fromkeys(u for u in epg_urls if re.match(r"https?://", u, re.I)))
+    epg_sets = []
+    for priority, name, url in EPG_SOURCES:
+        epg = load_xmltv(url)
+        if epg:
+            epg_sets.append((name, epg))
+    # Limit embedded EPG downloads to avoid a runaway number of giant XML files.
+    embedded = [u for u in epg_urls if u not in {x[2] for x in EPG_SOURCES}][:30]
+    for url in embedded:
+        if any(url == x[2] for x in EPG_SOURCES):
+            continue
+        epg = load_xmltv(url)
+        if epg:
+            epg_sets.append((url, epg))
+    epg_match(channels, epg_sets)
+    log.info("EPG: loaded_sets=%d", len(epg_sets))
+
+    validate_streams(channels, max(1, args.workers), not args.no_check)
+
+    # Sort Russian channels first and by stream richness.
+    channel_list = sorted(
+        channels.values(),
+        key=lambda c: (not c.russian_priority, -len(c.streams), -sum(1 for s in c.streams.values() if s.alive), normalize_name(c.name))
     )
-    parser.add_argument("--url", default=DEFAULT_URL, help="VK URL (можно пусто при --discover)")
-    parser.add_argument("--output", default=DEFAULT_OUTPUT)
-    parser.add_argument("--max-pages", type=int, default=DEFAULT_MAX_PAGES)
-    parser.add_argument("--max-playlist-depth", type=int, default=DEFAULT_MAX_PLAYLIST_DEPTH)
-    parser.add_argument("--verbose", action="store_true")
 
-    parser.add_argument("--check", action="store_true", help="HTTP + scoring")
-    parser.add_argument("--deep", action="store_true", help="ffprobe")
-    parser.add_argument(
-        "--discover", action="store_true",
-        help="Все публичные источники (iptv-org, smolnp, dearbulut, RU/СНГ)",
-    )
-    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
-    parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
-    parser.add_argument(
-        "--top", type=int, default=DEFAULT_TOP_N,
-        help="Резервов потоков на канал (default 12)",
-    )
-    parser.add_argument("--fuzzy", type=float, default=DEFAULT_FUZZY)
-    parser.add_argument("--max-alts", type=int, default=DEFAULT_MAX_ALTS)
-    parser.add_argument("--user-agent", default=USER_AGENT)
-    parser.add_argument("--no-ssl-verify", action="store_true")
+    best = OUT / "mega_best.m3u"
+    all_streams = OUT / "mega_all_streams.m3u"
+    twelve = OUT / "mega_12plus.m3u"
+    ru = OUT / "mega_russia.m3u"
+    ru12 = OUT / "mega_russia_12plus.m3u"
 
-    args = parser.parse_args()
+    write_m3u(channel_list, best, all_streams=False)
+    write_m3u(channel_list, all_streams, all_streams=True)
+    write_m3u(channel_list, twelve, all_streams=True, min_streams=MIN_ALTERNATIVES)
+    ru_channels = [c for c in channel_list if c.russian_priority]
+    write_m3u(ru_channels, ru, all_streams=False)
+    write_m3u(ru_channels, ru12, all_streams=True, min_streams=MIN_ALTERNATIVES)
 
-    if args.max_pages < 1 or args.max_playlist_depth < 0:
-        print("Invalid max-pages / max-playlist-depth", file=sys.stderr)
-        return 2
+    write_json(channel_list, OUT / "mega_channels.json")
+    write_jsonl(channel_list, OUT / "mega_channels.jsonl")
+    write_txt(channel_list, OUT / "mega_channels.txt")
+    stats = write_stats(channel_list, len(sources), len(epg_sets), OUT / "statistics.json")
 
-    if not args.url and not args.discover:
-        print("Нужен --url или --discover", file=sys.stderr)
-        return 2
+    report = OUT / "statistics.txt"
+    report.write_text(
+        "\n".join([
+            "RU IPTV MEGA PARSER",
+            "=" * 60,
+            f"Channels: {stats['channels']}",
+            f"Russian/CIS priority: {stats['russian_channels']}",
+            f"Stream URLs: {stats['stream_urls']}",
+            f"Alive stream URLs: {stats['alive_stream_urls']}",
+            f"Channels with >=12 pool: {stats['channels_with_12plus_pool']}",
+            f"Channels with >=12 alive: {stats['channels_with_12plus_alive']}",
+            f"Channels with EPG: {stats['channels_with_epg']}",
+            f"EPG.one matches: {stats['epg_matched_by_epg_one']}",
+            f"Teleguide matches: {stats['epg_matched_by_teleguide']}",
+            f"Sources: {stats['sources']}",
+            f"EPG sets: {stats['epg_sources']}",
+            "",
+            f"Target 20k reached: {'YES' if stats['channels'] >= TARGET_CHANNELS else 'NO'}",
+            f"Russian target 10k reached: {'YES' if stats['russian_channels'] >= TARGET_RU else 'NO'}",
+        ]) + "\n", encoding="utf-8")
 
-    output_dir = Path(args.output)
-    setup_logging(output_dir, args.verbose)
-
-    collector = Collector(
-        page_url=args.url or "",
-        output_dir=output_dir,
-        max_pages=args.max_pages,
-        max_playlist_depth=args.max_playlist_depth,
-    )
-
-    try:
-        collector.run(
-            do_check=args.check,
-            discover=args.discover,
-            fuzzy=args.fuzzy,
-            max_alts=args.max_alts,
-            workers=args.workers,
-            timeout=args.timeout,
-            deep=args.deep,
-            user_agent=args.user_agent,
-            ssl_verify=not args.no_ssl_verify,
-            top_n=args.top,
-        )
-        return 0
-    except KeyboardInterrupt:
-        LOG.warning("Interrupted")
-        return 130
-    except Exception:
-        LOG.exception("FATAL")
-        return 1
+    log.info("=" * 72)
+    log.info("FINISHED")
+    log.info("CHANNELS: %d | RU: %d | STREAMS: %d | ALIVE: %d", stats['channels'], stats['russian_channels'], stats['stream_urls'], stats['alive_stream_urls'])
+    log.info(">=12 pool: %d | >=12 alive: %d", stats['channels_with_12plus_pool'], stats['channels_with_12plus_alive'])
+    log.info("OUTPUT: %s", OUT.resolve())
+    log.info("=" * 72)
+    return 0
 
 
 if __name__ == "__main__":
