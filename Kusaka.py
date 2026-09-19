@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-RU IPTV MEGA PARSER
-===================
+RU IPTV MEGA PARSER v2
+=====================
 Большой агрегатор публичных M3U/M3U8 + EPG.
 
 Цели:
@@ -74,7 +74,7 @@ READ_TIMEOUT = 12
 MAX_BYTES = 80 * 1024 * 1024
 CACHE_TTL = 6 * 3600
 
-USER_AGENT = "RU-IPTV-Mega-Parser/1.0 (+public-playlist-aggregator)"
+USER_AGENT = "RU-IPTV-Mega-Parser/2.0 (+public-playlist-aggregator)"
 
 # Known public sources. Additional sources can be supplied with --sources-file.
 # iptv-org is intentionally expanded dynamically from its PLAYLISTS.md so that
@@ -87,6 +87,14 @@ BASE_SOURCES = [
     "https://raw.githubusercontent.com/Free-TV/IPTV/master/playlists/playlist_russia.m3u8",
     "https://dearbulut.github.io/iptv/playlists/country/ru.m3u",
     "https://raw.githubusercontent.com/substanc1/iptv-russia/main/streams/ru.m3u",
+    "https://iptv-org.github.io/iptv/index.m3u",
+    "https://iptv-org.github.io/iptv/countries/by.m3u",
+    "https://iptv-org.github.io/iptv/countries/kz.m3u",
+    "https://iptv-org.github.io/iptv/countries/uz.m3u",
+    "https://iptv-org.github.io/iptv/countries/kg.m3u",
+    "https://iptv-org.github.io/iptv/countries/am.m3u",
+    "https://iptv-org.github.io/iptv/countries/az.m3u",
+    "https://iptv-org.github.io/iptv/countries/md.m3u",
 ]
 
 IPTV_ORG_PLAYLISTS = "https://raw.githubusercontent.com/iptv-org/iptv/master/PLAYLISTS.md"
@@ -114,6 +122,87 @@ RU_WORDS = {
     "рус", "ru", "cis", "снг", "беларусь", "казахстан", "кыргызстан",
     "узбекистан", "армения", "азербайджан", "молдова",
 }
+
+# Priority discovery catalogue. These are aliases/classifiers only: the parser
+# never invents a stream URL. It uses them to make sure differently named
+# records are searched/merged consistently across public playlists.
+PRIORITY_ALIASES = {
+    "Ключ": {
+        "Ключ", "Ключ ТВ", "Kluch", "Kluch TV", "Kluch.ru",
+        "Ключ (576p)", "Ключ HD",
+    },
+    "СТРАХ": {
+        "Страх", "СТРАХ", "Страх HD", "СТРАХ HD",
+        "STRAH", "STRAH HD", "Strah HD",
+    },
+    "SUMIKO": {
+        "Сумико", "Сумико HD", "Sumiko", "SUMIKO", "Sumiko HD",
+    },
+    "Муз ТВ": {
+        "Муз ТВ", "MUZ TV", "MUZ-TV", "Muz TV",
+    },
+    "Муз ТВ Орбиты": {
+        "Муз ТВ Орбита", "Муз ТВ Москва", "Муз ТВ Дальний Восток",
+        "Муз ТВ Урал", "MUZ TV Orbit", "MUZ TV Orbita",
+    },
+    "Муз ТВ UZ": {
+        "Муз ТВ Uz", "MUZ TV UZ", "MUZ TV Uzbekistan",
+    },
+    "Муз ТВ BY": {
+        "Муз ТВ By", "MUZ TV BY", "MUZ TV Belarus",
+    },
+}
+
+# Russian broadcasters / regional classification. Classification does not
+# merge unrelated channels; it only raises their discovery/EPG priority.
+RUSSIAN_BROADCASTER_PATTERNS = (
+    "ртрс", "ртрс.плюс", "rtrs", "вгтрк", "vgtrk",
+    "россия 1", "россия 24", "россия к", "россия культура",
+    "гтрк", "государственная телевизионная и радиовещательная компания",
+)
+RUSSIAN_INTERNATIONAL_MARKERS = (
+    "international", "intl", "int", "world", "global",
+)
+REGIONAL_MARKERS = (
+    "республика", "область", "край", "округ", "автоном",
+    "гтрк", "регион", "город", "район", "област",
+)
+
+def priority_family(name: str) -> str:
+    n = clean_text(name).lower()
+    for family, aliases in PRIORITY_ALIASES.items():
+        if any(normalize_name(n) == normalize_name(a) for a in aliases):
+            return family
+    # Robust alias matching for decorated records, e.g. "Ключ HD | Москва".
+    nn = normalize_name(n)
+    if re.search(r"\bkluch(?:\.ru)?\b|\bключ\b", nn):
+        return "Ключ"
+    if re.search(r"\bstrah\b|\bстрах\b", nn):
+        return "СТРАХ"
+    if re.search(r"\bsumiko\b|\bсумико\b", nn):
+        return "SUMIKO"
+    if "муз тв" in nn or "muz tv" in nn or "muz-tv" in nn:
+        if re.search(r"\b(?:uz|uzbek|uzbekistan)\b|узб", nn):
+            return "Муз ТВ UZ"
+        if re.search(r"\b(?:by|belarus)\b|беларус", nn):
+            return "Муз ТВ BY"
+        if re.search(r"орбит|orbit|москва|дальний восток|урал", nn):
+            return "Муз ТВ Орбиты"
+        return "Муз ТВ"
+    return ""
+
+def priority_score(name: str, group: str, source: str) -> int:
+    text = clean_text(" ".join((name, group, source))).lower()
+    score = 0
+    if priority_family(name):
+        score += 100
+    if any(x in text for x in RUSSIAN_BROADCASTER_PATTERNS):
+        score += 40
+    if any(x in text for x in REGIONAL_MARKERS):
+        score += 20
+    if any(x in text for x in RUSSIAN_INTERNATIONAL_MARKERS):
+        score += 25
+    return score
 
 # ---------------------------------------------------------------------------
 # LOGGING
@@ -160,6 +249,8 @@ class Channel:
     country: str = ""
     language: str = ""
     russian_priority: bool = False
+    priority_family: str = ""
+    priority_score: int = 0
     sources: set[str] = field(default_factory=set)
     streams: dict[str, Stream] = field(default_factory=dict)
     epg_source: str = ""
@@ -177,8 +268,6 @@ class Channel:
             # Preserve the richest information from duplicate records.
             if not old.source and stream.source:
                 old.source = stream.source
-            if stream.logo if False else False:
-                pass
 
     def stream_list(self) -> list[Stream]:
         return list(self.streams.values())
@@ -223,6 +312,13 @@ def clean_text(s: str) -> str:
     return s
 
 
+def extract_tvg_shift(name: str, explicit: str = "") -> str:
+    if explicit:
+        return explicit.strip()
+    m = re.search(r"(?:\(|\[)?\s*([+-]\d{1,2})\s*(?:\)|\])", name or "")
+    return m.group(1) if m else ""
+
+
 def normalize_name(name: str) -> str:
     s = clean_text(name).lower()
     s = re.sub(r"\([^)]*\+\d+[^)]*\)", " ", s)
@@ -235,6 +331,12 @@ def normalize_name(name: str) -> str:
 
 
 def canonical_key(name: str, tvg_id: str = "") -> str:
+    # Priority aliases deliberately get a stable family key so that e.g.
+    # "Kluch.ru", "Ключ HD" and "Ключ ТВ" can contribute alternatives to
+    # the same channel even when their tvg-id values differ between M3U files.
+    pf = priority_family(name)
+    if pf in {"Ключ", "СТРАХ", "SUMIKO", "Муз ТВ", "Муз ТВ Орбиты", "Муз ТВ UZ", "Муз ТВ BY"}:
+        return "priority:" + normalize_name(pf)
     n = normalize_name(name)
     if tvg_id:
         tid = clean_text(tvg_id).lower()
@@ -325,6 +427,7 @@ def parse_m3u(text: str, source_url: str) -> tuple[list[Channel], list[str]]:
                 "group": attrs.get("group-title", ""),
                 "country": attrs.get("tvg-country", ""),
                 "language": attrs.get("tvg-language", ""),
+                "shift": attrs.get("tvg-shift", ""),
             }
         elif not line.startswith("#") and current is not None and re.match(r"https?://", line, re.I):
             name = clean_text(current["name"])
@@ -332,6 +435,8 @@ def parse_m3u(text: str, source_url: str) -> tuple[list[Channel], list[str]]:
                 current = None
                 continue
             score = russian_score(name, current["group"], current["country"], current["language"], source_url)
+            pf = priority_family(name)
+            pscore = priority_score(name, current["group"], source_url)
             ch = Channel(
                 key=canonical_key(name, current["tvg_id"]),
                 name=name,
@@ -342,7 +447,10 @@ def parse_m3u(text: str, source_url: str) -> tuple[list[Channel], list[str]]:
                 group=current["group"],
                 country=current["country"],
                 language=current["language"],
-                russian_priority=score >= 6,
+                russian_priority=(score >= 6 or pscore >= 20),
+                priority_family=pf,
+                priority_score=pscore,
+                tvg_shift=extract_tvg_shift(name, current.get("shift", "")),
                 sources={source_url},
             )
             ch.add_stream(Stream(url=line, source=source_url))
@@ -422,6 +530,12 @@ def similarity(a: str, b: str) -> float:
 
 
 def find_channel(channels: dict[str, Channel], incoming: Channel) -> Optional[Channel]:
+    # Priority-family match is stronger than tvg-id because public playlists
+    # often assign different ids to the same named service.
+    if incoming.priority_family:
+        pk = "priority:" + normalize_name(incoming.priority_family)
+        if pk in channels:
+            return channels[pk]
     # Strong ID match.
     if incoming.tvg_id:
         key = canonical_key(incoming.name, incoming.tvg_id)
@@ -432,8 +546,7 @@ def find_channel(channels: dict[str, Channel], incoming: Channel) -> Optional[Ch
     if key in channels:
         return channels[key]
 
-    # Controlled fuzzy merge. Do not compare against all 20k for every item.
-    # Index by first two normalized tokens.
+    # Controlled fuzzy merge. Candidate selection is intentionally conservative.
     tokens = normalize_name(incoming.name).split()
     if not tokens:
         return None
@@ -465,6 +578,11 @@ def merge_channel(dst: Channel, src: Channel) -> None:
     if not dst.language and src.language:
         dst.language = src.language
     dst.russian_priority = dst.russian_priority or src.russian_priority
+    if not dst.priority_family and src.priority_family:
+        dst.priority_family = src.priority_family
+    dst.priority_score = max(dst.priority_score, src.priority_score)
+    if not dst.tvg_shift and src.tvg_shift:
+        dst.tvg_shift = src.tvg_shift
     dst.sources.update(src.sources)
     for s in src.streams.values():
         dst.add_stream(s)
@@ -698,6 +816,7 @@ def write_m3u(channels: list[Channel], path: Path, all_streams: bool, min_stream
                 f'tvg-id="{m3u_attr(ch.tvg_id)}"' if ch.tvg_id else '',
                 f'tvg-name="{m3u_attr(ch.tvg_name or ch.name)}"',
                 f'tvg-logo="{m3u_attr(ch.logo)}"' if ch.logo else '',
+                f'tvg-shift="{m3u_attr(ch.tvg_shift)}"' if ch.tvg_shift else '',
                 f'group-title="{m3u_attr(ch.group or ("Россия" if ch.russian_priority else "IPTV"))}"',
                 f'stream-rank="{rank}"',
                 f'backup-count="{max(0, len(streams)-1)}"',
@@ -724,8 +843,11 @@ def write_json(channels: list[Channel], path: Path) -> None:
             "country": c.country,
             "language": c.language,
             "russian_priority": c.russian_priority,
+            "priority_family": c.priority_family,
+            "priority_score": c.priority_score,
             "epg_source": c.epg_source,
             "epg_confidence": c.epg_confidence,
+            "tvg_shift": c.tvg_shift,
             "stream_count": len(c.streams),
             "alive_stream_count": sum(1 for s in c.streams.values() if s.alive),
             "streams": [asdict(s) for s in sorted(c.streams.values(), key=stream_score, reverse=True)],
@@ -741,7 +863,9 @@ def write_jsonl(channels: list[Channel], path: Path) -> None:
             f.write(json.dumps({
                 "key": c.key, "name": c.name, "tvg_id": c.tvg_id,
                 "logo": c.logo, "group": c.group, "russian": c.russian_priority,
+                "priority_family": c.priority_family, "priority_score": c.priority_score,
                 "epg_source": c.epg_source, "epg_confidence": c.epg_confidence,
+                "tvg_shift": c.tvg_shift,
                 "streams": [asdict(s) for s in sorted(c.streams.values(), key=stream_score, reverse=True)],
             }, ensure_ascii=False) + "\n")
 
@@ -770,6 +894,8 @@ def write_stats(channels: list[Channel], source_count: int, epg_count: int, path
         "alive_stream_urls": alive_total,
         "channels_with_12plus_pool": with12,
         "channels_with_12plus_alive": with12_alive,
+        "priority_channels": sum(1 for c in channels if c.priority_family),
+        "priority_with_12plus_alive": sum(1 for c in channels if c.priority_family and sum(1 for s in c.streams.values() if s.alive is True) >= MIN_ALTERNATIVES),
         "sources": source_count,
         "epg_sources": epg_count,
         "channels_with_epg": sum(1 for c in channels if c.tvg_id),
@@ -809,6 +935,14 @@ def main() -> int:
     if not args.no_iptv_org_expand:
         sources.extend(discover_iptv_org_playlists())
     sources = list(dict.fromkeys(normalize_url(x) for x in sources if x))
+    def source_priority(u: str) -> tuple[int, str]:
+        x = u.lower()
+        if any(k in x for k in ("/countries/ru.", "/countries/by.", "/countries/kz.", "/countries/uz.", "/countries/kg.", "/countries/am.", "/countries/az.", "/countries/md.")):
+            return (0, x)
+        if any(k in x for k in ("russia", "iptvru", "ru.m3u", "rtrs", "vgtrk")):
+            return (1, x)
+        return (2, x)
+    sources.sort(key=source_priority)
     log.info("SOURCES: %d", len(sources))
 
     parsed: list[tuple[str, list[Channel], list[str]]] = []
@@ -836,6 +970,12 @@ def main() -> int:
     channels, m3u_epgs = aggregate(parsed)
     source_epg_urls.extend(m3u_epgs)
     log.info("CHANNELS AFTER MERGE: %d", len(channels))
+    priority_counts = {}
+    for c in channels.values():
+        if c.priority_family:
+            priority_counts[c.priority_family] = priority_counts.get(c.priority_family, 0) + 1
+    if priority_counts:
+        log.info("PRIORITY DISCOVERY: %s", ", ".join(f"{k}={v}" for k, v in sorted(priority_counts.items())))
 
     # If max-channels is set, keep Russian channels first, then the rest.
     if args.max_channels and len(channels) > args.max_channels:
@@ -874,6 +1014,8 @@ def main() -> int:
     twelve = OUT / "mega_12plus.m3u"
     ru = OUT / "mega_russia.m3u"
     ru12 = OUT / "mega_russia_12plus.m3u"
+    priority_out = OUT / "mega_priority_discovery.m3u"
+    priority12_out = OUT / "mega_priority_12plus.m3u"
 
     write_m3u(channel_list, best, all_streams=False)
     write_m3u(channel_list, all_streams, all_streams=True)
@@ -881,6 +1023,9 @@ def main() -> int:
     ru_channels = [c for c in channel_list if c.russian_priority]
     write_m3u(ru_channels, ru, all_streams=False)
     write_m3u(ru_channels, ru12, all_streams=True, min_streams=MIN_ALTERNATIVES)
+    priority_channels = [c for c in channel_list if c.priority_family]
+    write_m3u(priority_channels, priority_out, all_streams=True)
+    write_m3u(priority_channels, priority12_out, all_streams=True, min_streams=MIN_ALTERNATIVES)
 
     write_json(channel_list, OUT / "mega_channels.json")
     write_jsonl(channel_list, OUT / "mega_channels.jsonl")
@@ -898,6 +1043,8 @@ def main() -> int:
             f"Alive stream URLs: {stats['alive_stream_urls']}",
             f"Channels with >=12 pool: {stats['channels_with_12plus_pool']}",
             f"Channels with >=12 alive: {stats['channels_with_12plus_alive']}",
+            f"Priority channels: {stats['priority_channels']}",
+            f"Priority channels with >=12 alive: {stats['priority_with_12plus_alive']}",
             f"Channels with EPG: {stats['channels_with_epg']}",
             f"EPG.one matches: {stats['epg_matched_by_epg_one']}",
             f"Teleguide matches: {stats['epg_matched_by_teleguide']}",
