@@ -1,0 +1,146 @@
+name: Kusaka IPTV Collector
+
+on:
+  workflow_dispatch:
+    inputs:
+      discover:
+        description: "Искать дополнительные публичные источники"
+        required: false
+        default: true
+        type: boolean
+
+      check:
+        description: "Проверять найденные потоки"
+        required: false
+        default: true
+        type: boolean
+
+      deep:
+        description: "Глубокая проверка через ffprobe"
+        required: false
+        default: false
+        type: boolean
+
+      top:
+        description: "Количество резервных потоков на канал"
+        required: false
+        default: "12"
+        type: string
+
+      workers:
+        description: "Количество параллельных проверок"
+        required: false
+        default: "80"
+        type: string
+
+  schedule:
+    # Каждый день в 03:00 UTC
+    - cron: "0 3 * * *"
+
+  push:
+    paths:
+      - "Kusaka.py"
+      - ".github/workflows/kusaka.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: kusaka
+  cancel-in-progress: false
+
+jobs:
+  run-kusaka:
+    name: Run Kusaka IPTV Collector
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install \
+            requests \
+            beautifulsoup4 \
+            aiohttp \
+            rich
+
+      - name: Verify Kusaka
+        run: |
+          python --version
+          ffprobe -version | head -n 1
+          python -m py_compile Kusaka.py
+
+      - name: Run Kusaka
+        env:
+          DISCOVER: ${{ github.event_name == 'workflow_dispatch' && inputs.discover || true }}
+          CHECK: ${{ github.event_name == 'workflow_dispatch' && inputs.check || true }}
+          DEEP: ${{ github.event_name == 'workflow_dispatch' && inputs.deep || false }}
+          TOP: ${{ github.event_name == 'workflow_dispatch' && inputs.top || '12' }}
+          WORKERS: ${{ github.event_name == 'workflow_dispatch' && inputs.workers || '80' }}
+        run: |
+          set -e
+
+          ARGS="--check --top ${TOP} --workers ${WORKERS} --output kusaka_output"
+
+          if [ "${DISCOVER}" = "true" ]; then
+            ARGS="${ARGS} --discover"
+          fi
+
+          if [ "${DEEP}" = "true" ]; then
+            ARGS="${ARGS} --deep"
+          fi
+
+          echo "Running:"
+          echo "python Kusaka.py ${ARGS}"
+
+          python Kusaka.py ${ARGS}
+
+      - name: Show generated files
+        if: always()
+        run: |
+          echo "===== OUTPUT ====="
+          if [ -d kusaka_output ]; then
+            find kusaka_output -maxdepth 2 -type f -printf '%p (%s bytes)\n' | sort
+          else
+            echo "kusaka_output not found"
+          fi
+
+      - name: Upload Kusaka artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: kusaka-output-${{ github.run_number }}
+          path: |
+            kusaka_output/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Commit generated results
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add kusaka_output/
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Kusaka: update IPTV results"
+            git push
+          fi
