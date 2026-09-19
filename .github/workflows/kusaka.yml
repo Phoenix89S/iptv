@@ -2,39 +2,8 @@ name: Kusaka IPTV Collector
 
 on:
   workflow_dispatch:
-    inputs:
-      discover:
-        description: "Искать дополнительные публичные источники"
-        required: false
-        default: true
-        type: boolean
-
-      check:
-        description: "Проверять найденные потоки"
-        required: false
-        default: true
-        type: boolean
-
-      deep:
-        description: "Глубокая проверка через ffprobe"
-        required: false
-        default: false
-        type: boolean
-
-      top:
-        description: "Количество резервных потоков на канал"
-        required: false
-        default: "12"
-        type: string
-
-      workers:
-        description: "Количество параллельных проверок"
-        required: false
-        default: "80"
-        type: string
 
   schedule:
-    # Каждый день в 03:00 UTC
     - cron: "0 3 * * *"
 
   push:
@@ -50,83 +19,69 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  run-kusaka:
-    name: Run Kusaka IPTV Collector
+  kusaka:
+    name: Run Kusaka
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v5
 
       - name: Setup Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-          cache: pip
 
-      - name: Install system packages
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests beautifulsoup4 aiohttp rich
+
+      - name: Install FFmpeg
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install \
-            requests \
-            beautifulsoup4 \
-            aiohttp \
-            rich
-
-      - name: Verify Kusaka
+      - name: Check Python
         run: |
           python --version
+          ffmpeg -version | head -n 1
           ffprobe -version | head -n 1
+
+      - name: Check Kusaka syntax
+        run: |
           python -m py_compile Kusaka.py
 
+      - name: Show Kusaka help
+        run: |
+          python Kusaka.py --help
+
       - name: Run Kusaka
-        env:
-          DISCOVER: ${{ github.event_name == 'workflow_dispatch' && inputs.discover || true }}
-          CHECK: ${{ github.event_name == 'workflow_dispatch' && inputs.check || true }}
-          DEEP: ${{ github.event_name == 'workflow_dispatch' && inputs.deep || false }}
-          TOP: ${{ github.event_name == 'workflow_dispatch' && inputs.top || '12' }}
-          WORKERS: ${{ github.event_name == 'workflow_dispatch' && inputs.workers || '80' }}
         run: |
-          set -e
+          python Kusaka.py
 
-          ARGS="--check --top ${TOP} --workers ${WORKERS} --output kusaka_output"
-
-          if [ "${DISCOVER}" = "true" ]; then
-            ARGS="${ARGS} --discover"
-          fi
-
-          if [ "${DEEP}" = "true" ]; then
-            ARGS="${ARGS} --deep"
-          fi
-
-          echo "Running:"
-          echo "python Kusaka.py ${ARGS}"
-
-          python Kusaka.py ${ARGS}
-
-      - name: Show generated files
+      - name: Show output
         if: always()
         run: |
-          echo "===== OUTPUT ====="
-          if [ -d kusaka_output ]; then
-            find kusaka_output -maxdepth 2 -type f -printf '%p (%s bytes)\n' | sort
-          else
-            echo "kusaka_output not found"
-          fi
+          echo "===== FILES ====="
+          find . -maxdepth 3 -type f \
+            ! -path "./.git/*" \
+            -printf '%p (%s bytes)\n' | sort
 
-      - name: Upload Kusaka artifacts
+      - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
-          name: kusaka-output-${{ github.run_number }}
+          name: kusaka-results-${{ github.run_number }}
           path: |
             kusaka_output/
+            *.m3u
+            *.m3u8
+            *.json
+            *.jsonl
+            *.txt
+            *.log
           if-no-files-found: warn
           retention-days: 14
 
@@ -136,7 +91,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add kusaka_output/
+          git add -A
 
           if git diff --cached --quiet; then
             echo "No changes to commit."
