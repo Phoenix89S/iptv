@@ -1,51 +1,51 @@
 #EXTM3U
-#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="1" backup-count="11",Первый
-http://flussonic.mkpnet.ru/tv-4f9598ab5f91dca4/video.m3u8
-#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="2" backup-count="11",Первый [ALT 2]
-https://rt-vlg-saratov-htlive.cdn.ngenix.net/hls/CH_R03_OTT_VLG_SARATOV_1TV/variant.m3u8
-#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="3" backup-count="11",Первый [ALT 3]
-https://zabava-htlive.cdn.ngenix.net/hls/CH_1TVSD_5/variant.m3u8
-#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="4" backup-count="11",Первый [ALT 4]
-https://zabava-htlive.cdn.ngenix.net/hls/CH_1TVSD_8/variant.m3u8
-#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="5" backup-count="11",Первый [ALT 5]
-https://zabava-htlive.cdn.ngenix.net/hls/CH_1TVSD/variant.m3u8
-#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="6" backup-count="11",Первый [ALT 6]
-https://rt-nw-klgr-htlive.cdn.ngenix.net/hls/CH_R03_1TV_KLNG/variant.m3u8
-#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="7" backup-count="11",Первый [ALT 7]
-https://rt-sib-omsk-htlive.cdn.ngenix.net/hls/CH_R03_OTT_SIB_OMSK_1TV_OMSKOBL/variant.m3u8
-#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="8" backup-count="11",Первый [ALT 8]
-https://zabava-htlive.cdn.ngenix.net/hls/CH_1TVSD_2/variant.m3u8
-#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="9" backup-count="11",Первый [ALT 9]
-https://zabava-htlive.cdn.ngenix.net/hls/CH_1TVSD_6/variant.m3u8
-#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="10" backup-count="11",Первый [ALT 10]
-https://s14131.cdn.ngenix.net/hls/CH_R41_OTT_DV_KAM_1TV/variant.m3u8
-#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="11" backup-count="11",Первый [ALT 11]
-https://zabava-htlive.cdn.ngenix.net/hls/CH_1TVSD_4/variant.m3u8
-#EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="12" backup-count="11",Первый [ALT 12]
-https://serv30.vintera.tv/restream/1_old/playlist.m3u8
-#EXTINF:-1 tvg-id="2601" tvg-name="NTV" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="1" backup-count="12",NTV
+#EXTINF:-1 tvg-id="2615" tvg-name="Russia-24 (1080p)" tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Rossiya-24_Logo.svg/960px-Rossiya-24_Logo.svg.png" group-title="News" stream-rank="1" backup-count="11",Russia-24 (1080p)
+http://88.212.15.27/live/test_trojka_25p/playlist.m3u8
+#EXTINF:-1 tvg-id="2615" tvg-name="Russia-24 (1080p)" tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Rossiya-24_Logo.svg/960px-Rossiya-24_Logo.svg.png" group-title="News" stream-rank="2" backup-count="11",Russia-24 (1080p) [ALT 2]
+http://77.232.131.211/Rossiya24/index.m3u8
+#EXTINF:-1 tvg-id="2615" tvg-name="Russia-24 (1080p)" tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Rossiya-24_Logo.svg/960px-Rossiya-24_Logo.svg.png" group-title="News" stream-rank="3" backup-count="11",Russia-24 (1080p) [ALT 3]
+https://live.smotrim.ru/vgtrk/0/russia24-hd/index.m3u8
+#EXTINF:-1 tvg-id="2615" tvg-name="Russia-24 (1080p)" tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Rossiya-24_Logo.svg/960px-Rossiya-24_Logo.svg.png" group-title="News" stream-rank="4" backup-count="11",Russia-24 (1080p) [ALT 4]
+http://176.118.197.101/Rossiya24/index.m3u8
+#EXTINF:-1 tvg-id="2615" tvg-name="Russia-24 (1080p)" tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Rossiya-24_Logo.svg/960px-Rossiya-24_Logo.svg.png" group-title="News" stream-rank="5" backup-count="11",Russia-24 (1080p) [ALT 5]
+https://stream.smotrim.ru/hls2/russia24nl_smotrim/playlist_5.m3u8
+#EXTINF:-1 tvg-id="2615" tvg-name="Russia-24 (1080p)" tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Rossiya-24_Logo.svg/960px-Rossiya-24_Logo.svg.png" group-title="News" stream-rank="6" backup-count="11",Russia-24 (1080p) [ALT 6]
+https://fs.uplink.kz/rossia_24/mono.m3u8?token=onlinetv
+#EXTINF:-1 tvg-id="2615" tvg-name="Russia-24 (1080p)" tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Rossiya-24_Logo.svg/960px-Rossiya-24_Logo.svg.png" group-title="News" stream-rank="7" backup-count="11",Russia-24 (1080p) [ALT 7]
+http://dmi3y-tv.online/hls/smotrim/T2/CH_RUSSIA24_INT.m3u8
+#EXTINF:-1 tvg-id="2615" tvg-name="Russia-24 (1080p)" tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Rossiya-24_Logo.svg/960px-Rossiya-24_Logo.svg.png" group-title="News" stream-rank="8" backup-count="11",Russia-24 (1080p) [ALT 8]
+https://stream8.cinerama.uz/1021/tracks-v1a1/mono.m3u8
+#EXTINF:-1 tvg-id="2615" tvg-name="Russia-24 (1080p)" tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Rossiya-24_Logo.svg/960px-Rossiya-24_Logo.svg.png" group-title="News" stream-rank="9" backup-count="11",Russia-24 (1080p) [ALT 9]
+https://uiptv.do.am/1ufc/000000006/playlist.m3u8
+#EXTINF:-1 tvg-id="2615" tvg-name="Russia-24 (1080p)" tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Rossiya-24_Logo.svg/960px-Rossiya-24_Logo.svg.png" group-title="News" stream-rank="10" backup-count="11",Russia-24 (1080p) [ALT 10]
+https://vgtrkregion-reg.cdnvideo.ru/vgtrk/habarovsk/russia24-sd/index.m3u8
+#EXTINF:-1 tvg-id="2615" tvg-name="Russia-24 (1080p)" tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Rossiya-24_Logo.svg/960px-Rossiya-24_Logo.svg.png" group-title="News" stream-rank="11" backup-count="11",Russia-24 (1080p) [ALT 11]
+https://vgtrkregion-reg.cdnvideo.ru/vgtrk/0/russia24-hd/index.m3u8
+#EXTINF:-1 tvg-id="2615" tvg-name="Russia-24 (1080p)" tvg-logo="https://upload.wikimedia.org/wikipedia/commons/thumb/6/66/Rossiya-24_Logo.svg/960px-Rossiya-24_Logo.svg.png" group-title="News" stream-rank="12" backup-count="11",Russia-24 (1080p) [ALT 12]
+http://str2.iptvhd.ru:8080/Rossiya_24/index.m3u8
+#EXTINF:-1 tvg-id="2601" tvg-name="ntv (720p)" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="1" backup-count="12",ntv (720p)
 https://2-fss-1.streamhoster.com/pl_122/201748-1431018-1/chunklist.m3u8
-#EXTINF:-1 tvg-id="2601" tvg-name="NTV" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="2" backup-count="12",NTV [ALT 2]
-http://flussonic.linkintel.ru/ntv/index.m3u8
-#EXTINF:-1 tvg-id="2601" tvg-name="NTV" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="3" backup-count="12",NTV [ALT 3]
-http://str2.iptvhd.ru:8080/NTV_HD/index.m3u8
-#EXTINF:-1 tvg-id="2601" tvg-name="NTV" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="4" backup-count="12",NTV [ALT 4]
-http://str2.iptvhd.ru:8080/NTV/index.m3u8
-#EXTINF:-1 tvg-id="2601" tvg-name="NTV" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="5" backup-count="12",NTV [ALT 5]
+#EXTINF:-1 tvg-id="2601" tvg-name="ntv (720p)" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="2" backup-count="12",ntv (720p) [ALT 2]
 http://176.118.197.101/NTV/index.m3u8
-#EXTINF:-1 tvg-id="2601" tvg-name="NTV" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="6" backup-count="12",NTV [ALT 6]
+#EXTINF:-1 tvg-id="2601" tvg-name="ntv (720p)" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="3" backup-count="12",ntv (720p) [ALT 3]
 https://cdn-dvr.ntv.ru/ntv0_hd/index.m3u8
-#EXTINF:-1 tvg-id="2601" tvg-name="NTV" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="7" backup-count="12",NTV [ALT 7]
-https://protokolldns.xyz/ntv.l.i.v.e5547892023/index.m3u8
-#EXTINF:-1 tvg-id="2601" tvg-name="NTV" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="8" backup-count="12",NTV [ALT 8]
-https://stream8.cinerama.uz/1023/tracks-v1a1/mono.m3u8
-#EXTINF:-1 tvg-id="2601" tvg-name="NTV" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="9" backup-count="12",NTV [ALT 9]
-https://bl.rutube.ru/livestream/c37cd74192c6bc3d6cd6077c0c4fd686/index.m3u8?e=2077050299&s=HSWg81JrQ3OqmwuWkEIDAQ&scheme=https
-#EXTINF:-1 tvg-id="2601" tvg-name="NTV" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="10" backup-count="12",NTV [ALT 10]
+#EXTINF:-1 tvg-id="2601" tvg-name="ntv (720p)" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="4" backup-count="12",ntv (720p) [ALT 4]
+http://flussonic.linkintel.ru/ntv/index.m3u8
+#EXTINF:-1 tvg-id="2601" tvg-name="ntv (720p)" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="5" backup-count="12",ntv (720p) [ALT 5]
 https://cdn4.skygo.mn/live/disk1/NTVHD/HLSv3-FTA/NTVHD.m3u8
-#EXTINF:-1 tvg-id="2601" tvg-name="NTV" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="11" backup-count="12",NTV [ALT 11]
+#EXTINF:-1 tvg-id="2601" tvg-name="ntv (720p)" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="6" backup-count="12",ntv (720p) [ALT 6]
+https://stream8.cinerama.uz/1023/tracks-v1a1/mono.m3u8
+#EXTINF:-1 tvg-id="2601" tvg-name="ntv (720p)" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="7" backup-count="12",ntv (720p) [ALT 7]
+https://bl.rutube.ru/livestream/c37cd74192c6bc3d6cd6077c0c4fd686/index.m3u8?e=2077050299&s=HSWg81JrQ3OqmwuWkEIDAQ&scheme=https
+#EXTINF:-1 tvg-id="2601" tvg-name="ntv (720p)" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="8" backup-count="12",ntv (720p) [ALT 8]
+https://protokolldns.xyz/ntv.l.i.v.e5547892023/index.m3u8
+#EXTINF:-1 tvg-id="2601" tvg-name="ntv (720p)" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="9" backup-count="12",ntv (720p) [ALT 9]
 http://45.153.24.78/NTV/index.m3u8
-#EXTINF:-1 tvg-id="2601" tvg-name="NTV" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="12" backup-count="12",NTV [ALT 12]
+#EXTINF:-1 tvg-id="2601" tvg-name="ntv (720p)" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="10" backup-count="12",ntv (720p) [ALT 10]
 https://cdn.ntv.ru/ntv-spb/index.m3u8
-#EXTINF:-1 tvg-id="2601" tvg-name="NTV" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="13" backup-count="12",NTV [ALT 13]
+#EXTINF:-1 tvg-id="2601" tvg-name="ntv (720p)" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="11" backup-count="12",ntv (720p) [ALT 11]
+http://str2.iptvhd.ru:8080/NTV/index.m3u8
+#EXTINF:-1 tvg-id="2601" tvg-name="ntv (720p)" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="12" backup-count="12",ntv (720p) [ALT 12]
+http://str2.iptvhd.ru:8080/NTV_HD/index.m3u8
+#EXTINF:-1 tvg-id="2601" tvg-name="ntv (720p)" tvg-logo="https://i.imgur.com/gtZLzxq.png" group-title="News" stream-rank="13" backup-count="12",ntv (720p) [ALT 13]
 http://152.89.62.111:8080/nXyAiP3DNp/QgOuvocpGv/223012

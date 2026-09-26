@@ -1,0 +1,21 @@
+#EXTM3U
+#EXTINF:-1 tvg-id="897" tvg-name="Муз-ТВ" tvg-logo="https://i.imgur.com/Ml3qqOF.png" group-title="Russia" stream-rank="1" backup-count="7",Муз-ТВ S
+http://46.32.176.50/muztv/index.m3u8
+#EXTINF:-1 tvg-id="897" tvg-name="Муз-ТВ" tvg-logo="https://i.imgur.com/Ml3qqOF.png" group-title="Russia" stream-rank="2" backup-count="7",Муз-ТВ S [ALT 2]
+http://stream.mcquack.net/86/index.m3u8
+#EXTINF:-1 tvg-id="897" tvg-name="Муз-ТВ" tvg-logo="https://i.imgur.com/Ml3qqOF.png" group-title="Russia" stream-rank="3" backup-count="7",Муз-ТВ S [ALT 3]
+https://fs.uplink.kz/muz_tv/mono.m3u8?token=onlinetv
+#EXTINF:-1 tvg-id="897" tvg-name="Муз-ТВ" tvg-logo="https://i.imgur.com/Ml3qqOF.png" group-title="Russia" stream-rank="4" backup-count="7",Муз-ТВ S [ALT 4]
+https://stream8.cinerama.uz/1200/tracks-v1a1/mono.m3u8
+#EXTINF:-1 tvg-id="897" tvg-name="Муз-ТВ" tvg-logo="https://i.imgur.com/Ml3qqOF.png" group-title="Russia" stream-rank="5" backup-count="7",Муз-ТВ S [ALT 5]
+https://www.youtube.com/channel/UCgHYcHd2SuX0ees5q0OWicQ/live
+#EXTINF:-1 tvg-id="897" tvg-name="Муз-ТВ" tvg-logo="https://i.imgur.com/Ml3qqOF.png" group-title="Russia" stream-rank="6" backup-count="7",Муз-ТВ S [ALT 6]
+https://streaming102.interskytech.com/live/618.m3u8
+#EXTINF:-1 tvg-id="897" tvg-name="Муз-ТВ" tvg-logo="https://i.imgur.com/Ml3qqOF.png" group-title="Russia" stream-rank="7" backup-count="7",Муз-ТВ S [ALT 7]
+http://185.71.81.6:8080/20/index.m3u8
+#EXTINF:-1 tvg-id="897" tvg-name="Муз-ТВ" tvg-logo="https://i.imgur.com/Ml3qqOF.png" group-title="Russia" stream-rank="8" backup-count="7",Муз-ТВ S [ALT 8]
+http://hls127.freeott.top:8080/MUZ_TV/video.m3u8
+#EXTINF:-1 tvg-id="8017" tvg-name="Muz TV Uzbekistan" tvg-logo="https://s8.vcdn.biz/static/f/6010782281/image.jpg" group-title="Music" stream-rank="1" backup-count="0",Muz TV Uzbekistan
+https://stream8.cinerama.uz/1063/tracks-v1a1/mono.m3u8
+#EXTINF:-1 tvg-id="Kluch.ru" tvg-name="Kluch" tvg-logo="https://i.imgur.com/WA9TOPi.png" group-title="Entertainment" stream-rank="1" backup-count="0",Kluch (576p)
+http://hls127.freeott.top:8080/Kluch/video.m3u8
