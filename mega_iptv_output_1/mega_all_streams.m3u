@@ -1,8 +1,10 @@
 #EXTM3U
 
-#EXTM3U
+
+#---тест поток----
 #EXTINF:-1 tvg-id="voprosy-i-otvety" tvg-logo="https://iptvx.one/picons/voprosy-i-otvety.png" group-title="Образовательные",Вопросы и ответы(тест)
 https://stream1.cinerama.uz/1429/tracks-v1a1/mono.m3u8
+#----конец тестового --------
 
 #EXTINF:-1 tvg-id="146" tvg-name="Первый" tvg-logo="https://naggdd.github.io/iptv/logos/perviy.png" group-title="Основные" stream-rank="1" backup-count="11",Первый
 http://flussonic.mkpnet.ru/tv-4f9598ab5f91dca4/video.m3u8
@@ -8163,5 +8165,4 @@ https://jmp2.uk/plu-660be37e7bcd860008793a6a.m3u8
 #EXTINF:-1 tvg-id="8389" tvg-name="Bondi Rescue (Sweden) (720p)" tvg-logo="https://images.pluto.tv/channels/660d66be7bcd8600087cfee5/colorLogoPNG.png" group-title="Series" stream-rank="1" backup-count="0",Bondi Rescue (Sweden) (720p)
 https://jmp2.uk/plu-660d67eec8311c0008b8c3f7.m3u8
 #EXTINF:-1 tvg-id="8389" tvg-name="Bondi Rescue (Sweden) DK (720p)" tvg-logo="https://images.pluto.tv/channels/660d66be7bcd8600087cfee5/colorLogoPNG.png" group-title="Series" stream-rank="1" backup-count="0",Bondi Rescue (Sweden) DK (720p)
-https://jmp2.uk/plu-660d66be7bcd8600087cfee5.m3u8
-#EXTINF:-1 tvg-id="8389" tvg-name="Bondi Rescue (Sweden) NO (720p)" tvg-logo="https://images.pluto.tv/channels/660d66be7bcd8600087cfee5/colorLogoPNG.png" group-title="Series" stream-rank="1" backup-count="0"
+https://jmp2
